@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Детектор дефектов ковра</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; }
+
+  .header {
+    background: #16213e; padding: 14px 24px;
+    border-bottom: 2px solid #0f3460;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .header h1 { font-size: 1.15rem; color: #e94560; }
+  .header span { font-size: 0.82rem; color: #666; }
+
+  .tabs { display: flex; background: #12192b; border-bottom: 1px solid #0f3460; }
+  .tab-btn {
+    padding: 10px 24px; cursor: pointer; font-size: 0.85rem; color: #666;
+    border-bottom: 2px solid transparent; transition: all .2s; background: none;
+    border-top: none; border-left: none; border-right: none;
+  }
+  .tab-btn.active { color: #e94560; border-bottom-color: #e94560; }
+  .tab-btn:hover:not(.active) { color: #aaa; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 95px); }
+
+  .panel {
+    background: #16213e; border-right: 1px solid #0f3460;
+    padding: 18px 14px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto;
+  }
+  .section-title {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+    color: #5588cc; border-bottom: 1px solid #0f3460; padding-bottom: 5px; margin-bottom: 2px;
+  }
+  label { font-size: 0.83rem; color: #aaa; display: block; margin-bottom: 4px; }
+  select, input[type=number] {
+    width: 100%; padding: 7px 10px; border-radius: 6px;
+    border: 1px solid #0f3460; background: #0d1b2a; color: #e0e0e0;
+    font-size: 0.88rem; outline: none;
+  }
+  select:focus, input[type=number]:focus { border-color: #e94560; }
+
+  .radio-group { display: flex; flex-direction: column; gap: 4px; }
+  .radio-item {
+    display: flex; align-items: flex-start; gap: 8px; padding: 6px 9px;
+    border-radius: 6px; cursor: pointer; border: 1px solid #0f3460; transition: border-color .2s;
+  }
+  .radio-item:hover { border-color: #5588cc; }
+  .radio-item input { accent-color: #e94560; margin-top: 3px; flex-shrink: 0; }
+  .radio-item span { font-size: 0.82rem; }
+  .radio-item small { font-size: 0.68rem; color: #666; display: block; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .workers-block { display: none; }
+  .workers-block.visible { display: block; }
+  .slider-val { text-align: center; font-size: 1.05rem; font-weight: 700; color: #e94560; }
+
+  .btn-run {
+    width: 100%; padding: 11px; border-radius: 8px; border: none;
+    background: #e94560; color: #fff; font-size: 0.95rem; font-weight: 700;
+    cursor: pointer; transition: background .2s;
+  }
+  .btn-run:hover { background: #c73652; }
+  .btn-run:disabled { background: #444; cursor: default; }
+
+  .btn-all {
+    width: 100%; padding: 11px; border-radius: 8px; border: 2px solid #5588cc;
+    background: transparent; color: #5588cc; font-size: 0.92rem; font-weight: 700;
+    cursor: pointer; transition: all .2s; margin-top: 4px;
+  }
+  .btn-all:hover { background: #5588cc22; }
+  .btn-all:disabled { opacity: .4; cursor: default; }
+
+  .results { padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+  .placeholder {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; color: #444; font-size: 0.88rem;
+  }
+
+  .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+  .metric-card {
+    background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 10px; text-align: center;
+  }
+  .metric-card .val { font-size: 1.25rem; font-weight: 700; color: #e94560; }
+  .metric-card .lbl { font-size: 0.68rem; color: #888; margin-top: 2px; }
+
+  .images-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .img-wrap { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; overflow: hidden; }
+  .img-wrap .img-label { font-size: 0.72rem; color: #888; padding: 5px 10px; background: #12192b; border-bottom: 1px solid #0f3460; }
+  .img-wrap img { width: 100%; display: block; max-height: 320px; object-fit: contain; }
+
+  .table-wrap { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; overflow: hidden; }
+  .table-wrap .tbl-header { padding: 8px 12px; font-size: 0.7rem; color: #5588cc; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; background: #12192b; border-bottom: 1px solid #0f3460; }
+  .table-scroll { max-height: 240px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th { background: #12192b; color: #5588cc; text-align: left; padding: 7px 10px; font-weight: 600; border-bottom: 1px solid #0f3460; }
+  td { padding: 6px 10px; border-bottom: 1px solid #1a2540; }
+  tr:hover td { background: #1a2540; }
+  .class-badge { display: inline-block; width: 20px; height: 20px; border-radius: 3px; text-align: center; line-height: 20px; font-weight: 700; font-size: 0.72rem; }
+
+  .dir-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .dir-card {
+    background: #16213e; border: 1px solid #0f3460; border-radius: 8px; overflow: hidden; cursor: pointer;
+    transition: border-color .2s;
+  }
+  .dir-card:hover { border-color: #5588cc; }
+  .dir-card img { width: 100%; height: 130px; object-fit: cover; display: block; }
+  .dir-card .card-info { padding: 7px 10px; font-size: 0.75rem; }
+  .dir-card .card-name { color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dir-card .card-meta { color: #888; margin-top: 2px; }
+  .dir-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 8px; padding: 12px; background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
+  }
+
+  /* Сравнение режимов */
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .compare-table th { background: #12192b; color: #5588cc; text-align: left; padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #0f3460; }
+  .compare-table td { padding: 7px 12px; border-bottom: 1px solid #1a2540; vertical-align: middle; }
+  .compare-table tr.best-row td { background: #0f2a18; }
+  .compare-table tr:hover td { background: #1a2540; }
+  .bar-cell { min-width: 120px; }
+  .bar-bg { background: #0f3460; border-radius: 3px; height: 12px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; background: #e94560; transition: width .6s ease; }
+  .bar-fill.best { background: #22c55e; }
+  .speedup-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 700;
+    background: #0f3460; color: #5588cc;
+  }
+  .speedup-badge.gain { background: #0f2a18; color: #22c55e; }
+  .speedup-badge.slow { background: #2a0f18; color: #e94560; }
+  .mode-tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; background: #0f3460; color: #aaa; }
+
+  .compare-progress {
+    background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 14px 16px;
+    display: none;
+  }
+  .compare-progress.visible { display: block; }
+  .progress-label { font-size: 0.8rem; color: #aaa; margin-bottom: 6px; }
+  .progress-bar { background: #0f3460; border-radius: 4px; height: 8px; overflow: hidden; }
+  .progress-bar .fill { height: 100%; background: #e94560; transition: width .4s; border-radius: 4px; }
+
+  .spinner { display: none; width: 32px; height: 32px; border-radius: 50%; border: 3px solid #0f3460; border-top-color: #e94560; animation: spin .8s linear infinite; margin: auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner.active { display: block; }
+
+  .error-msg { background: #3d0f1a; border: 1px solid #e94560; border-radius: 8px; padding: 10px 14px; color: #e94560; font-size: 0.83rem; display: none; }
+  .error-msg.visible { display: block; }
+
+  input[type=range] { width: 100%; accent-color: #e94560; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="#e94560"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+  <h1>Параллельная классификация дефектов</h1>
+  <span>MVTec AD · Carpet · PatchCore · FastAPI</span>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('single')">📷 Одно изображение</button>
+  <button class="tab-btn" onclick="switchTab('dir')">📁 Анализ директории</button>
+  <button class="tab-btn" onclick="switchTab('compare')">📊 Сравнение режимов</button>
+  <button class="tab-btn" onclick="switchTab('metrics')">🎯 Метрики качества</button>
+  <button class="tab-btn" onclick="switchTab('binopt')">🔧 Оптимизация маски</button>
+</div>
+
+<!-- ═══════════════════ ВКЛАДКА 1: ОДНО ИЗОБРАЖЕНИЕ ═══════════════════ -->
+<div class="tab-content active" id="tab-single">
+  <div class="panel">
+    <div>
+      <div class="section-title">Изображение</div>
+      <label>Файл из test/ (с типом дефекта)</label>
+      <select id="sel-image"><option value="">— загрузка... —</option></select>
+    </div>
+
+    <div>
+      <div class="section-title">Режим обработки</div>
+      <div class="radio-group" id="mode-group-single">
+        <label class="radio-item"><input type="radio" name="mode-s" value="sequential" checked>
+          <div><span>Последовательный</span><small>for-цикл · baseline</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-s" value="parallel_cpu">
+          <div><span>Параллельные дефекты (CPU)</span><small>ProcessPoolExecutor · N воркеров</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-s" value="parallel_gpu">
+          <div><span>Параллельные дефекты (GPU)</span><small>PyTorch CUDA морфология</small></div></label>
+      </div>
+    </div>
+
+    <div class="workers-block" id="workers-block-s">
+      <div class="section-title">Воркеры (CPU)</div>
+      <input type="range" id="workers-s" min="1" max="8" value="4">
+      <div class="slider-val" id="workers-val-s">4</div>
+    </div>
+
+    <div>
+      <div class="section-title">Фильтр по размеру (диаметр, px)</div>
+      <div class="row2">
+        <div><label>S_min</label><input type="number" id="smin-s" value="10" min="0"></div>
+        <div><label>S_max</label><input type="number" id="smax-s" value="500" min="1"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Классификация</div>
+      <div class="row2">
+        <div><label>K — классов</label><input type="number" id="k-s" value="3" min="1" max="10"></div>
+        <div><label>Порог heatmap</label><input type="number" id="thr-s" value="0.5" min="0" max="1" step="0.05"></div>
+      </div>
+    </div>
+
+    <button class="btn-run" id="btn-single" onclick="runSingle()">▶ ЗАПУСТИТЬ</button>
+  </div>
+
+  <div class="results" id="results-single">
+    <div class="placeholder" id="ph-single">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="#333"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-1 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+      <span>Выберите изображение и нажмите «Запустить»</span>
+    </div>
+    <div class="spinner" id="spin-single"></div>
+    <div class="error-msg" id="err-single"></div>
+    <div id="out-single" style="display:none;flex-direction:column;gap:14px;">
+      <div class="metrics-row" id="metrics-single"></div>
+      <div class="images-row">
+        <div class="img-wrap"><div class="img-label">Оригинал</div><img id="img-orig" src=""></div>
+        <div class="img-wrap"><div class="img-label">Размеченное (классы — цвета)</div><img id="img-ann" src=""></div>
+      </div>
+      <div class="table-wrap">
+        <div class="tbl-header">Дефекты после фильтрации</div>
+        <div class="table-scroll">
+          <table><thead><tr><th>ID</th><th>Площадь</th><th>Диаметр</th><th>Ось</th><th>Класс</th><th>Bbox</th></tr></thead>
+          <tbody id="defects-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ ВКЛАДКА 2: ДИРЕКТОРИЯ ═══════════════════ -->
+<div class="tab-content" id="tab-dir">
+  <div class="panel">
+    <div>
+      <div class="section-title">Поддиректория test/</div>
+      <label>Выберите тип дефекта (или «все»)</label>
+      <select id="sel-subfolder"><option value="">— загрузка... —</option></select>
+      <div style="margin-top:6px;font-size:0.72rem;color:#666;" id="subfolder-count"></div>
+    </div>
+
+    <div>
+      <div class="section-title">Режим обработки</div>
+      <div class="radio-group">
+        <label class="radio-item"><input type="radio" name="mode-d" value="sequential" checked>
+          <div><span>Последовательный</span><small>baseline · for-цикл</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-d" value="parallel_cpu">
+          <div><span>Параллельные дефекты (CPU)</span><small>ProcessPool · N воркеров на дефект</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-d" value="parallel_images">
+          <div><span>Параллельные изображения (CPU)</span><small>ThreadPool · N потоков на фото</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-d" value="parallel_gpu">
+          <div><span>Параллельные дефекты (GPU)</span><small>PyTorch CUDA морфология</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-d" value="parallel_images_gpu">
+          <div><span>Параллельные изображения (GPU)</span><small>ThreadPool фото + GPU дефекты</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-d" value="parallel_combined">
+          <div><span>Комбинированный CPU</span><small>ThreadPool фото + ProcessPool дефектов</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-d" value="parallel_combined_gpu">
+          <div><span>Batch GPU</span><small>Все heatmap за один GPU-проход</small></div></label>
+      </div>
+    </div>
+
+    <div class="workers-block" id="workers-block-d">
+      <div class="section-title">Воркеры</div>
+      <input type="range" id="workers-d" min="1" max="8" value="4">
+      <div class="slider-val" id="workers-val-d">4</div>
+    </div>
+
+    <div>
+      <div class="section-title">Фильтр</div>
+      <div class="row2">
+        <div><label>S_min</label><input type="number" id="smin-d" value="10" min="0"></div>
+        <div><label>S_max</label><input type="number" id="smax-d" value="500" min="1"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Классификация</div>
+      <div class="row2">
+        <div><label>K классов</label><input type="number" id="k-d" value="3" min="1" max="10"></div>
+        <div><label>Порог</label><input type="number" id="thr-d" value="0.5" min="0" max="1" step="0.05"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Лимит изображений</div>
+      <input type="number" id="max-img" value="20" min="1" max="500">
+      <div style="font-size:0.7rem;color:#666;margin-top:3px;">Максимум за один запрос</div>
+    </div>
+
+    <button class="btn-run" id="btn-dir" onclick="runDir()">▶ АНАЛИЗИРОВАТЬ</button>
+  </div>
+
+  <div class="results" id="results-dir">
+    <div class="placeholder" id="ph-dir">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="#333"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+      <span>Выберите директорию и нажмите «Анализировать»</span>
+    </div>
+    <div class="spinner" id="spin-dir"></div>
+    <div class="error-msg" id="err-dir"></div>
+    <div id="out-dir" style="display:none;flex-direction:column;gap:14px;">
+      <div class="dir-summary" id="dir-summary"></div>
+      <div class="table-wrap">
+        <div class="tbl-header">Результаты по изображениям</div>
+        <div class="table-scroll" style="max-height:320px;">
+          <table>
+            <thead><tr><th>Изображение</th><th>Найдено</th><th>После фильтра</th><th>Время (мс)</th><th>Speedup</th><th>Аннотация</th></tr></thead>
+            <tbody id="dir-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="tbl-header" style="background:#12192b;padding:8px 12px;border-radius:6px 6px 0 0;font-size:0.7rem;color:#5588cc;font-weight:600;letter-spacing:.5px;text-transform:uppercase;border:1px solid #0f3460;border-bottom:none;">Аннотированные изображения</div>
+        <div class="dir-grid" id="dir-grid" style="border:1px solid #0f3460;border-radius:0 0 8px 8px;padding:10px;background:#16213e;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ ВКЛАДКА 3: СРАВНЕНИЕ РЕЖИМОВ ═══════════════════ -->
+<div class="tab-content" id="tab-compare">
+  <div class="panel">
+    <div>
+      <div class="section-title">Поддиректория test/</div>
+      <select id="cmp-subfolder"><option value="">Все (весь test/)</option></select>
+    </div>
+
+    <div>
+      <div class="section-title">Воркеры (для parallel-режимов)</div>
+      <input type="range" id="cmp-workers" min="1" max="8" value="4">
+      <div class="slider-val" id="cmp-workers-val">4</div>
+    </div>
+
+    <div>
+      <div class="section-title">Фильтр</div>
+      <div class="row2">
+        <div><label>S_min</label><input type="number" id="cmp-smin" value="10" min="0"></div>
+        <div><label>S_max</label><input type="number" id="cmp-smax" value="500" min="1"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Классификация</div>
+      <div class="row2">
+        <div><label>K классов</label><input type="number" id="cmp-k" value="3" min="1" max="10"></div>
+        <div><label>Порог</label><input type="number" id="cmp-thr" value="0.5" min="0" max="1" step="0.05"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Лимит изображений</div>
+      <input type="number" id="cmp-max" value="20" min="1" max="200">
+      <div style="font-size:0.7rem;color:#888;margin-top:4px;">
+        Каждый из 7 режимов обработает это кол-во изображений.<br>
+        При 20 изображениях тест займёт ~1–3 мин.
+      </div>
+    </div>
+
+    <button class="btn-all" id="btn-compare" onclick="runCompare()">⚡ ПРОВЕРИТЬ ВСЕ РЕЖИМЫ</button>
+
+    <div style="font-size:0.72rem;color:#666;padding:4px 0;line-height:1.5;">
+      Запускает все 7 режимов поочерёдно на одном наборе изображений и показывает сравнительную таблицу speedup.
+    </div>
+  </div>
+
+  <div class="results" id="results-compare">
+    <div class="placeholder" id="ph-compare">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="#333"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+      <span>Нажмите «Проверить все режимы» для запуска</span>
+    </div>
+
+    <div class="compare-progress" id="cmp-progress">
+      <div class="progress-label" id="cmp-progress-label">Инициализация...</div>
+      <div class="progress-bar"><div class="fill" id="cmp-progress-fill" style="width:0%"></div></div>
+    </div>
+
+    <div class="spinner" id="spin-compare"></div>
+    <div class="error-msg" id="err-compare"></div>
+
+    <div id="out-compare" style="display:none;flex-direction:column;gap:16px;">
+      <div class="metrics-row" id="cmp-summary"></div>
+
+      <div class="table-wrap">
+        <div class="tbl-header">Сравнение всех режимов · Wall time (общее время, мс)</div>
+        <div style="overflow-x:auto;">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Режим</th>
+                <th>Wall time, мс</th>
+                <th>Ср. время, мс</th>
+                <th>Speedup vs seq.</th>
+                <th>График</th>
+                <th>Дефектов найдено</th>
+                <th>После фильтра</th>
+              </tr>
+            </thead>
+            <tbody id="cmp-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="tbl-header">Закон Амдала — анализ</div>
+        <div style="padding:14px 16px;font-size:0.82rem;line-height:1.7;color:#aaa;" id="cmp-amdahl"></div>
+      </div>
+
+      <div class="table-wrap" id="cmp-quality-wrap" style="display:none;">
+        <div class="tbl-header">Качество детекции · классификация изображений + попадание в маску</div>
+        <div style="padding:14px 16px;" id="cmp-quality"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ ВКЛАДКА 4: МЕТРИКИ КАЧЕСТВА ═══════════════════ -->
+<div class="tab-content" id="tab-metrics">
+  <div class="panel">
+
+    <!-- БЛОК КАЛИБРОВКИ -->
+    <div style="background:#0d1b2a;border:1px solid #22c55e44;border-radius:8px;padding:12px;">
+      <div class="section-title" style="color:#22c55e;">Шаг 1: Калибровка image-level gate</div>
+      <div style="font-size:0.74rem;color:#888;margin:6px 0 10px;line-height:1.55;">
+        PatchCore даёт каждому изображению <b>anomaly score</b> = max L2-расстояние до memory bank
+        (сырое, до нормализации). Нормальные изображения имеют низкий score, дефектные — высокий.<br><br>
+        Порог = процентиль scores <b>нормальных изображений</b>. Если score ниже порога → 0 дефектов.
+      </div>
+
+      <div style="margin-bottom:8px;">
+        <label>Источник нормальных изображений</label>
+        <div class="radio-group">
+          <label class="radio-item" style="border-color:#22c55e44;">
+            <input type="radio" name="cal-source" value="test_good" checked>
+            <div>
+              <span>test/good/ <span style="color:#22c55e;font-size:0.72rem;">✓ РЕКОМЕНДУЕТСЯ</span></span>
+              <small>PatchCore никогда не видел эти изображения → честный порог</small>
+            </div>
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="cal-source" value="train_good">
+            <div>
+              <span>train/good/ <span style="color:#e94560;font-size:0.72rem;">⚠ НЕЧЕСТНО</span></span>
+              <small>Memory bank построен из этих фото → score занижен → порог будет неверным</small>
+            </div>
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="cal-source" value="both">
+            <div>
+              <span>Оба набора <span style="color:#f59e0b;font-size:0.72rem;">сравнение</span></span>
+              <small>Больше данных, но train/good занижает порог</small>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="row2" style="margin-bottom:8px;">
+        <div><label>Процентиль (обычно 95–99)</label>
+          <input type="number" id="cal-percentile" value="95" min="50" max="100" step="1">
+          <div style="font-size:0.68rem;color:#666;margin-top:2px;">p95 = 95% норм. изображений ниже порога</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;">
+          <button class="btn-run" id="btn-calibrate" onclick="runCalibrate()"
+            style="background:#22c55e;font-size:0.82rem;padding:8px 12px;">КАЛИБРОВАТЬ</button>
+        </div>
+      </div>
+      <div id="cal-status" style="font-size:0.74rem;color:#22c55e;display:none;margin-top:6px;line-height:1.6;"></div>
+      <div id="cal-current" style="font-size:0.72rem;color:#666;margin-top:4px;"></div>
+    </div>
+
+    <div>
+      <div class="section-title">Шаг 2: Поддиректория test/</div>
+      <select id="met-subfolder"><option value="">Все (весь test/)</option></select>
+    </div>
+
+    <div>
+      <div class="section-title">Режим оптимизации</div>
+      <div class="radio-group">
+        <label class="radio-item"><input type="radio" name="mode-m" value="sequential" checked>
+          <div><span>Последовательный</span><small>Перебор на CPU · baseline</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-m" value="parallel_cpu">
+          <div><span>Параллельный CPU (Thread)</span><small>ThreadPool — cv2/numpy без GIL, нет IPC</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-m" value="parallel_gpu">
+          <div><span>GPU морфология (посл.)</span><small>PyTorch CUDA · sequential перебор</small></div></label>
+        <label class="radio-item"><input type="radio" name="mode-m" value="parallel_gpu_batch">
+          <div><span>GPU батч (все пороги)</span><small>[M,1,H,W] тензор за 1 GPU-проход</small></div></label>
+      </div>
+    </div>
+
+    <div class="workers-block" id="workers-block-m">
+      <div class="section-title">Воркеры (CPU)</div>
+      <input type="range" id="workers-m" min="1" max="8" value="4">
+      <div class="slider-val" id="workers-val-m">4</div>
+    </div>
+
+    <div>
+      <div class="section-title">Лимит изображений</div>
+      <input type="number" id="met-max" value="20" min="1" max="200">
+      <div style="font-size:0.7rem;color:#666;margin-top:3px;">Используются изображения с ground truth масками</div>
+    </div>
+
+    <div>
+      <div class="section-title">Сетка порогов heatmap</div>
+      <label>Значения через запятую</label>
+      <input type="text" id="met-thresholds" value="0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9"
+        style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid #0f3460;background:#0d1b2a;color:#e0e0e0;font-size:0.88rem;">
+    </div>
+
+    <div>
+      <div class="section-title">Сетка S_min (диаметр, px)</div>
+      <input type="text" id="met-smins" value="0,5,10,20,30"
+        style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid #0f3460;background:#0d1b2a;color:#e0e0e0;font-size:0.88rem;">
+    </div>
+
+    <div>
+      <div class="section-title">Сетка S_max (диаметр, px)</div>
+      <input type="text" id="met-smaxs" value="100,200,300,500"
+        style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid #0f3460;background:#0d1b2a;color:#e0e0e0;font-size:0.88rem;">
+    </div>
+
+    <div style="font-size:0.7rem;color:#666;background:#12192b;border-radius:6px;padding:8px;line-height:1.5;">
+      Комбинаций: <span id="met-combos-count">9 × 5 × 4 = 180</span><br>
+      Перебирает все комбинации threshold × S_min × S_max и выбирает параметры с максимальным F1.
+    </div>
+
+    <button class="btn-run" id="btn-metrics" onclick="runMetrics()">▶ ОПТИМИЗИРОВАТЬ</button>
+    <button class="btn-all" id="btn-metrics-all" onclick="runMetricsAll()">⚡ ВСЕ 4 РЕЖИМА</button>
+  </div>
+
+  <div class="results" id="results-metrics">
+    <div class="placeholder" id="ph-metrics">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="#333"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
+      <span>Запустите оптимизацию для подбора параметров по ground truth маскам</span>
+    </div>
+
+    <div class="compare-progress" id="met-progress">
+      <div class="progress-label" id="met-progress-label">Идёт оптимизация...</div>
+      <div class="progress-bar"><div class="fill" id="met-progress-fill" style="width:0%"></div></div>
+    </div>
+
+    <div class="spinner" id="spin-metrics"></div>
+    <div class="error-msg" id="err-metrics"></div>
+
+    <div id="out-metrics" style="display:none;flex-direction:column;gap:16px;">
+
+      <!-- Сводка -->
+      <div class="metrics-row" id="met-summary"></div>
+
+      <!-- Лучшие параметры -->
+      <div class="table-wrap">
+        <div class="tbl-header">Лучшие параметры (по F1)</div>
+        <div style="padding:14px 16px;" id="met-best-params"></div>
+      </div>
+
+      <!-- Топ-10 -->
+      <div class="table-wrap">
+        <div class="tbl-header">Топ-10 комбинаций параметров</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th>#</th><th>Threshold</th><th>S_min</th><th>S_max</th>
+              <th>F1</th><th>IoU</th><th>Precision</th><th>Recall</th><th></th>
+            </tr></thead>
+            <tbody id="met-top10-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Результат all-modes -->
+    <div id="out-metrics-all" style="display:none;flex-direction:column;gap:16px;">
+
+      <div class="metrics-row" id="met-all-summary"></div>
+
+      <div class="table-wrap">
+        <div class="tbl-header">Сравнение режимов оптимизации · время перебора параметров</div>
+        <div style="overflow-x:auto;">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Режим</th>
+                <th>Время, мс</th>
+                <th>Speedup</th>
+                <th>График</th>
+                <th>Best threshold</th>
+                <th>Best S_min</th>
+                <th>Best S_max</th>
+                <th>Best F1</th>
+                <th>Best IoU</th>
+                <th>Best Precision</th>
+                <th>Best Recall</th>
+              </tr>
+            </thead>
+            <tbody id="met-all-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="met-all-top10-container"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ ВКЛАДКА 5: ОПТИМИЗАЦИЯ МАСКИ ═══════════════════ -->
+<div class="tab-content" id="tab-binopt">
+  <div class="panel">
+
+    <!-- Текущие параметры -->
+    <div style="background:#0d1b2a;border:1px solid #5588cc44;border-radius:8px;padding:12px;">
+      <div class="section-title" style="color:#5588cc;">Текущие параметры бинаризации</div>
+      <div id="binopt-current" style="font-size:0.8rem;color:#aaa;margin-top:8px;line-height:1.7;">
+        — загрузка...
+      </div>
+      <button class="btn-all" style="margin-top:10px;" onclick="loadBinarizeParams()">↻ Обновить</button>
+    </div>
+
+    <!-- Ручная установка -->
+    <div>
+      <div class="section-title">Установить вручную</div>
+      <div class="row2">
+        <div>
+          <label>Threshold</label>
+          <input type="number" id="bp-threshold" value="0.5" min="0" max="1" step="0.05">
+        </div>
+        <div>
+          <label>Min Area (пикс²)</label>
+          <input type="number" id="bp-min-area" value="0" min="0" step="10">
+        </div>
+      </div>
+      <div class="row2" style="margin-top:8px;">
+        <div>
+          <label>Morph Kernel (нечёт.)</label>
+          <input type="number" id="bp-mk" value="3" min="1" max="15" step="2">
+        </div>
+        <div>
+          <label>Morph Iterations</label>
+          <input type="number" id="bp-mi" value="1" min="1" max="5">
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <label>Gaussian Blur Kernel (0=выкл, нечёт.)</label>
+        <input type="number" id="bp-blur" value="0" min="0" max="15" step="2">
+      </div>
+      <button class="btn-run" style="margin-top:10px;" onclick="setBinarizeParams()">
+        💾 Сохранить параметры
+      </button>
+    </div>
+
+    <!-- Grid Search -->
+    <div>
+      <div class="section-title">Автоподбор (Grid Search)</div>
+      <div style="font-size:0.74rem;color:#888;margin-bottom:10px;line-height:1.5;">
+        Перебирает 2016 комбинаций (7×6×4×3×4).<br>
+        Функция потерь: <b>(FP×10 + FN×5) / total</b><br>
+        FP × 2 штраф — ложная тревога останавливает конвейер.
+      </div>
+      <label>Поддиректория (пусто = все)</label>
+      <select id="binopt-subfolder"><option value="">Все (весь test/)</option></select>
+      <div class="row2" style="margin-top:8px;">
+        <div>
+          <label>Макс. изображений</label>
+          <input type="number" id="binopt-max-images" value="50" min="1" max="200">
+        </div>
+        <div>
+          <label>Workers</label>
+          <input type="number" id="binopt-workers" value="4" min="1" max="16">
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.82rem;color:#aaa;">
+          <input type="checkbox" id="binopt-use-gpu" style="accent-color:#e94560;">
+          GPU (PyTorch CUDA)
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.82rem;color:#aaa;" id="binopt-exact-wrap">
+          <input type="checkbox" id="binopt-gpu-exact" checked style="accent-color:#e94560;">
+          Точная min_area (findContours)
+        </label>
+      </div>
+      <button class="btn-run" style="margin-top:12px;" id="btn-binopt" onclick="runBinarizeOptimize()">
+        🔍 ЗАПУСТИТЬ ОПТИМИЗАЦИЮ
+      </button>
+    </div>
+
+  </div><!-- /panel -->
+
+  <div class="results" id="out-binopt">
+    <div class="placeholder" id="ph-binopt">
+      Запустите оптимизацию, чтобы найти наилучшие параметры бинаризации маски дефектов.
+    </div>
+    <div class="compare-progress" id="binopt-progress">
+      <div class="progress-label" id="binopt-progress-label">Запуск...</div>
+      <div class="progress-bar"><div class="fill" id="binopt-progress-fill" style="width:0%"></div></div>
+    </div>
+    <div class="error-msg" id="err-binopt"></div>
+    <div id="binopt-result-wrap"></div>
+  </div>
+</div>
+
+<script>
+const CLASS_COLORS = ['#00c800','#00c8c8','#0050dc','#0000dc','#c800c8','#00c864','#6400c8','#c8c800','#969696','#ffffff'];
+const SNAPS = [1,2,4,8];
+
+function snap(v) { return SNAPS.reduce((a,b) => Math.abs(b-v)<Math.abs(a-v)?b:a); }
+
+// Слайдеры
+['s','d'].forEach(tab => {
+  const sl = document.getElementById(`workers-${tab}`);
+  const vl = document.getElementById(`workers-val-${tab}`);
+  sl.addEventListener('input', () => { vl.textContent = snap(+sl.value); });
+  document.querySelectorAll(`input[name="mode-${tab}"]`).forEach(r => {
+    r.addEventListener('change', () => {
+      const needsWorkers = ['parallel_cpu','parallel_images','parallel_images_gpu','parallel_combined'].includes(r.value);
+      document.getElementById(`workers-block-${tab}`).classList.toggle('visible', needsWorkers && r.checked);
+    });
+  });
+});
+
+const cmpSl = document.getElementById('cmp-workers');
+const cmpVl = document.getElementById('cmp-workers-val');
+cmpSl.addEventListener('input', () => { cmpVl.textContent = snap(+cmpSl.value); });
+
+// Слайдер метрик
+const metSl = document.getElementById('workers-m');
+const metVl = document.getElementById('workers-val-m');
+metSl.addEventListener('input', () => { metVl.textContent = snap(+metSl.value); });
+document.querySelectorAll('input[name="mode-m"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('workers-block-m').classList.toggle('visible', r.value === 'parallel_cpu' && r.checked);
+  });
+});
+
+// Счётчик комбинаций
+function updateCombosCount() {
+  const parse = id => document.getElementById(id).value.split(',').map(s=>s.trim()).filter(s=>s).length;
+  const t = parse('met-thresholds'), sm = parse('met-smins'), sx = parse('met-smaxs');
+  document.getElementById('met-combos-count').textContent = `${t} × ${sm} × ${sx} = ${t*sm*sx}`;
+}
+['met-thresholds','met-smins','met-smaxs'].forEach(id =>
+  document.getElementById(id).addEventListener('input', updateCombosCount)
+);
+
+// Вкладки
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', ['single','dir','compare','metrics','binopt'][i] === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+// ─── Загрузка ───
+async function loadImages() {
+  try {
+    const r = await fetch('/images'); const d = await r.json();
+    const sel = document.getElementById('sel-image');
+    sel.innerHTML = d.images.length
+      ? d.images.map(n => `<option value="${n}">${n}</option>`).join('')
+      : '<option value="">— папка пуста —</option>';
+  } catch { document.getElementById('sel-image').innerHTML = '<option value="">— сервер недоступен —</option>'; }
+}
+
+async function loadSubfolders() {
+  try {
+    const r = await fetch('/subfolders'); const d = await r.json();
+    const opts = '<option value="">Все (весь test/)</option>' + d.subfolders.map(s=>`<option value="${s}">${s}</option>`).join('');
+    document.getElementById('sel-subfolder').innerHTML = opts;
+    document.getElementById('cmp-subfolder').innerHTML = opts;
+    document.getElementById('met-subfolder').innerHTML = opts;
+    document.getElementById('sel-subfolder').dispatchEvent(new Event('change'));
+  } catch {}
+}
+
+document.getElementById('sel-subfolder').addEventListener('change', async function() {
+  const sub = this.value;
+  try {
+    const r = await fetch('/images'); const d = await r.json();
+    const count = sub ? d.images.filter(p => p.startsWith(sub+'/')).length : d.images.length;
+    document.getElementById('subfolder-count').textContent = `Изображений: ${count}`;
+  } catch {}
+});
+
+// ─── Одно изображение ───
+async function runSingle() {
+  const image = document.getElementById('sel-image').value;
+  if (!image) { showErr('err-single','Выберите изображение.'); return; }
+  const mode    = document.querySelector('input[name="mode-s"]:checked').value;
+  const workers = snap(+document.getElementById('workers-s').value);
+  setLoading('single', true);
+  hideErr('err-single');
+  document.getElementById('ph-single').style.display = 'none';
+  document.getElementById('out-single').style.display = 'none';
+  try {
+    const resp = await fetch('/analyze', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        image_path: image, mode, workers,
+        S_min: +document.getElementById('smin-s').value,
+        S_max: +document.getElementById('smax-s').value,
+        K:     +document.getElementById('k-s').value,
+        threshold: +document.getElementById('thr-s').value,
+      })
+    });
+    if (!resp.ok) throw new Error(await getErrMsg(resp));
+    renderSingle(await resp.json(), image, mode, workers);
+  } catch(e) { showErr('err-single', 'Ошибка: ' + e.message); }
+  finally { setLoading('single', false); }
+}
+
+function renderSingle(data, image, mode, workers) {
+  const modeLabel = {sequential:'Последовательный', parallel_cpu:`CPU · ${workers}w`, parallel_gpu:'GPU'}[mode];
+  const speedup = data.speedup != null ? data.speedup.toFixed(2)+'×' : '—';
+  const pf      = data.parallel_fraction != null ? (data.parallel_fraction*100).toFixed(1)+'%' : '—';
+  document.getElementById('metrics-single').innerHTML = [
+    [data.n_defects_found, 'Найдено'],
+    [data.n_defects_after_filter, 'После фильтра'],
+    [data.time_ms.toFixed(1)+' мс', 'Время'],
+    [speedup, 'Speedup'],
+    [pf, 'Доля p'],
+    [modeLabel, 'Режим'],
+  ].map(([v,l]) => `<div class="metric-card"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+  document.getElementById('img-orig').src = `/original/${image}`;
+  document.getElementById('img-ann').src  = 'data:image/png;base64,' + data.annotated_image;
+  const tbody = document.getElementById('defects-tbody');
+  tbody.innerHTML = data.defects.length
+    ? data.defects.map(d => `<tr>
+        <td>${d.id}</td><td>${d.area.toFixed(1)}</td><td>${d.diameter.toFixed(1)}</td><td>${d.major_axis.toFixed(1)}</td>
+        <td><span class="class-badge" style="background:${CLASS_COLORS[d.class%10]};color:#000">${d.class}</span></td>
+        <td style="font-size:.72rem;color:#888">[${d.bbox.join(', ')}]</td></tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:#555;padding:16px">Дефекты не найдены</td></tr>';
+  document.getElementById('out-single').style.display = 'flex';
+}
+
+// ─── Утилита потокового чтения NDJSON ───
+async function fetchStream(url, body, onChunk) {
+  const resp = await fetch(url, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let msg; try { msg = extractError(await resp.json()); } catch { msg = await resp.text(); }
+    throw new Error(msg || `HTTP ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream: true});
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const t = line.trim(); if (!t) continue;
+      try { await onChunk(JSON.parse(t)); } catch(e) { console.warn('stream parse', e, line); }
+    }
+  }
+  if (buf.trim()) try { await onChunk(JSON.parse(buf.trim())); } catch {}
+}
+
+// ─── Директория ───
+async function runDir() {
+  const subfolder = document.getElementById('sel-subfolder').value;
+  const mode      = document.querySelector('input[name="mode-d"]:checked').value;
+  const workers   = snap(+document.getElementById('workers-d').value);
+  const maxImg    = +document.getElementById('max-img').value;
+  setLoading('dir', true);
+  hideErr('err-dir');
+  document.getElementById('ph-dir').style.display = 'none';
+  document.getElementById('out-dir').style.display = 'none';
+  document.getElementById('dir-tbody').innerHTML = '';
+  document.getElementById('dir-grid').innerHTML  = '';
+  document.getElementById('dir-summary').innerHTML = '';
+
+  try {
+    await fetchStream('/analyze_dir', {
+      subfolder, mode, workers, max_images: maxImg,
+      S_min: +document.getElementById('smin-d').value,
+      S_max: +document.getElementById('smax-d').value,
+      K:     +document.getElementById('k-d').value,
+      threshold: +document.getElementById('thr-d').value,
+    }, chunk => {
+      if (chunk.type === 'error') { showErr('err-dir', chunk.detail); return; }
+      if (chunk.type === 'start') {
+        document.getElementById('dir-summary').innerHTML =
+          `<div class="metric-card"><div class="val">${chunk.total}</div><div class="lbl">Изображений</div></div>`;
+        document.getElementById('out-dir').style.display = 'flex';
+      } else if (chunk.type === 'image') {
+        const r = chunk.result;
+        document.getElementById('dir-tbody').insertAdjacentHTML('beforeend', `<tr>
+          <td style="font-size:.75rem">${r.image}</td>
+          <td>${r.n_defects_found}</td><td>${r.n_defects_filtered}</td>
+          <td>${r.time_ms.toFixed(1)}</td>
+          <td>${r.speedup != null ? r.speedup.toFixed(2)+'×' : '—'}</td>
+          <td><img src="data:image/jpeg;base64,${r.annotated_image}" style="width:60px;height:60px;object-fit:cover;border-radius:3px;"></td>
+        </tr>`);
+        document.getElementById('dir-grid').insertAdjacentHTML('beforeend', `
+          <div class="dir-card" title="${r.image}">
+            <img src="data:image/jpeg;base64,${r.annotated_image}" loading="lazy">
+            <div class="card-info">
+              <div class="card-name">${r.image.split('/').pop()}</div>
+              <div class="card-meta">${r.image.split('/')[0]} · ${r.n_defects_filtered} деф. · ${r.time_ms.toFixed(0)} мс</div>
+            </div>
+          </div>`);
+      } else if (chunk.type === 'done') {
+        const d = chunk.summary;
+        document.getElementById('dir-summary').innerHTML = [
+          [d.subfolder,              'Директория'],
+          [d.total_images,           'Изображений'],
+          [d.total_defects_found,    'Найдено дефектов'],
+          [d.total_defects_filtered, 'После фильтра'],
+          [d.avg_time_ms.toFixed(1)+' мс', 'Ср. время'],
+          [(d.wall_time_ms ?? d.total_time_ms).toFixed(0)+' мс', 'Wall time'],
+        ].map(([v,l]) => `<div class="metric-card"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+        if (d.skipped_limit > 0) {
+          document.getElementById('dir-summary').insertAdjacentHTML('afterend',
+            `<div style="font-size:0.75rem;color:#e94560;padding:4px 0">⚠ Показано ${d.total_images} из ${d.total_images+d.skipped_limit} (лимит max_images)</div>`);
+        }
+      }
+    });
+  } catch(e) { showErr('err-dir', 'Ошибка: ' + e.message); }
+  finally { setLoading('dir', false); }
+}
+
+// ─── Сравнение всех режимов ───
+async function runCompare() {
+  const subfolder = document.getElementById('cmp-subfolder').value;
+  const workers   = snap(+document.getElementById('cmp-workers').value);
+  const maxImg    = +document.getElementById('cmp-max').value;
+
+  const btn = document.getElementById('btn-compare');
+  btn.disabled = true; btn.textContent = '⏳ Идёт тестирование...';
+  hideErr('err-compare');
+  document.getElementById('ph-compare').style.display = 'none';
+  document.getElementById('out-compare').style.display = 'none';
+  document.getElementById('cmp-tbody').innerHTML = '';
+  document.getElementById('cmp-summary').innerHTML = '';
+  document.getElementById('cmp-quality-wrap').style.display = 'none';
+
+  const prog      = document.getElementById('cmp-progress');
+  const progLabel = document.getElementById('cmp-progress-label');
+  const progFill  = document.getElementById('cmp-progress-fill');
+  prog.classList.add('visible');
+  progLabel.textContent = 'Инициализация...';
+  progFill.style.width = '2%';
+
+  const allModes = [];
+  let modesDone = 0, totalModes = 7;
+  let detectionQuality = null;
+
+  try {
+    await fetchStream('/analyze_all', {
+      subfolder, workers, max_images: maxImg,
+      S_min: +document.getElementById('cmp-smin').value,
+      S_max: +document.getElementById('cmp-smax').value,
+      K:     +document.getElementById('cmp-k').value,
+      threshold: +document.getElementById('cmp-thr').value,
+    }, chunk => {
+      if (chunk.type === 'error') { showErr('err-compare', chunk.detail); return; }
+      if (chunk.type === 'start') {
+        totalModes = chunk.n_modes || 7;
+        progLabel.textContent = `Вычисляем метрики качества (${chunk.n_images} изображений)...`;
+        progFill.style.width = '5%';
+        document.getElementById('out-compare').style.display = 'flex';
+      } else if (chunk.type === 'detection_quality') {
+        detectionQuality = chunk.data;
+        progLabel.textContent = `Запускаем ${totalModes} режимов...`;
+        progFill.style.width = '10%';
+        if (chunk.data) renderCmpQuality(chunk.data);
+      } else if (chunk.type === 'mode') {
+        modesDone++;
+        allModes.push(chunk.data);
+        progFill.style.width = (10 + Math.round(modesDone / totalModes * 85)) + '%';
+        progLabel.textContent = `Режим ${modesDone}/${totalModes}: ${chunk.data.label}`;
+        renderCmpModeRows(allModes);
+      } else if (chunk.type === 'done') {
+        progFill.style.width = '100%';
+        renderCmpAmdahl(chunk);
+        renderCmpSummary(chunk);
+      }
+    });
+  } catch(e) { showErr('err-compare', 'Ошибка: ' + e.message); }
+  finally {
+    document.getElementById('spin-compare').classList.remove('active');
+    prog.classList.remove('visible');
+    btn.disabled = false; btn.textContent = '⚡ ПРОВЕРИТЬ ВСЕ РЕЖИМЫ';
+  }
+}
+
+function renderCmpModeRows(modes) {
+  const maxWall = Math.max(...modes.map(m => m.wall_time_ms));
+  const minWall = Math.min(...modes.map(m => m.wall_time_ms));
+  document.getElementById('cmp-tbody').innerHTML = modes.map((m, idx) => {
+    const isBest = m.wall_time_ms === minWall;
+    const barPct = (m.wall_time_ms / maxWall * 100).toFixed(1);
+    const sp = m.speedup_vs_sequential;
+    const spClass = sp > 1.05 ? 'gain' : sp < 0.95 ? 'slow' : '';
+    const spText  = sp === 1.0 ? '1.00× (baseline)' : sp.toFixed(3)+'×';
+    return `<tr class="${isBest ? 'best-row' : ''}">
+      <td style="color:#666;font-size:0.75rem">${idx+1}</td>
+      <td><span class="mode-tag">${m.mode}</span><br>
+        <span style="font-size:0.75rem;color:#aaa">${m.label}</span>
+        ${isBest ? ' <span style="color:#22c55e;font-size:0.72rem">✓ ЛУЧШИЙ</span>' : ''}</td>
+      <td style="font-weight:700;color:${isBest?'#22c55e':'#e0e0e0'}">${m.wall_time_ms.toFixed(1)}</td>
+      <td>${m.avg_time_ms.toFixed(3)}</td>
+      <td><span class="speedup-badge ${spClass}">${spText}</span></td>
+      <td class="bar-cell"><div class="bar-bg"><div class="bar-fill ${isBest?'best':''}" style="width:${barPct}%"></div></div>
+        <div style="font-size:0.68rem;color:#666;margin-top:2px">${barPct}% от макс.</div></td>
+      <td>${m.total_defects_found}</td><td>${m.total_defects_filtered}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCmpSummary(data) {
+  const modes  = data.modes;
+  const minWall = Math.min(...modes.map(m => m.wall_time_ms));
+  const seqWall = (modes.find(m => m.mode === 'sequential') || {wall_time_ms:1}).wall_time_ms;
+  document.getElementById('cmp-summary').innerHTML = [
+    [data.n_images,  'Изображений'],
+    [data.workers,   'Воркеров'],
+    [minWall.toFixed(0)+' мс', 'Лучший режим'],
+    [seqWall.toFixed(0)+' мс', 'Sequential'],
+    [(seqWall/minWall).toFixed(2)+'×', 'Макс. speedup'],
+    [modes.length, 'Режимов протестировано'],
+  ].map(([v,l]) => `<div class="metric-card"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+}
+
+function renderCmpAmdahl(data) {
+  const modes = data.modes;
+  const minWall = Math.min(...modes.map(m => m.wall_time_ms));
+  const cpuMode = modes.find(m => m.mode === 'parallel_cpu');
+  const imgMode = modes.find(m => m.mode === 'parallel_images');
+  const combMode = modes.find(m => m.mode === 'parallel_combined');
+  const gpuMode  = modes.find(m => m.mode === 'parallel_gpu');
+  let html = `<b>Анализ результатов (${data.n_images} изображений, воркеров: ${data.workers})</b><br><br>`;
+  html += `<b>Закон Амдала:</b> Speedup = 1 / ((1−p) + p/N), где p — параллельная доля, N — воркеры.<br>`;
+  html += `Теоретический предел при N→∞: Speedup_max = 1/(1−p).<br><br>`;
+  if (cpuMode && cpuMode.speedup_vs_sequential !== 1.0) {
+    const sp = cpuMode.speedup_vs_sequential; const N = data.workers;
+    const p = N > 1 && sp > 0 ? (N*(sp-1)/(sp*(N-1))).toFixed(4) : '?';
+    html += `<b>parallel_cpu</b>: speedup=${sp.toFixed(3)}× при N=${N} → p≈${p}<br>`;
+  }
+  if (imgMode  && imgMode.speedup_vs_sequential  !== 1.0) html += `<b>parallel_images</b>: speedup=${imgMode.speedup_vs_sequential.toFixed(3)}×<br>`;
+  if (gpuMode  && gpuMode.speedup_vs_sequential  !== 1.0) html += `<b>parallel_gpu</b>: speedup=${gpuMode.speedup_vs_sequential.toFixed(3)}×<br>`;
+  if (combMode && combMode.speedup_vs_sequential !== 1.0) html += `<b>parallel_combined</b>: speedup=${combMode.speedup_vs_sequential.toFixed(3)}×<br>`;
+  const best = modes.find(m => m.wall_time_ms === minWall);
+  html += `<br><b>Вывод:</b> Наилучший результат — <b>${best.label}</b>, wall=${best.wall_time_ms.toFixed(1)} мс, speedup=${best.speedup_vs_sequential.toFixed(3)}×.`;
+  document.getElementById('cmp-amdahl').innerHTML = html;
+}
+
+function renderCmpQuality(dq) {
+  const qWrap = document.getElementById('cmp-quality-wrap');
+  qWrap.style.display = '';
+  const pct = v => (v*100).toFixed(1)+'%';
+  const card = (v, l, col) => `<div class="metric-card"><div class="val"${col?` style="color:${col}"`:''}>${v}</div><div class="lbl">${l}</div></div>`;
+  const f1Color  = dq.f1  >= 0.7 ? '#22c55e' : dq.f1  >= 0.5 ? '#f59e0b' : '#ef4444';
+  const iouColor = dq.mean_pixel_iou >= 0.5 ? '#22c55e' : dq.mean_pixel_iou >= 0.3 ? '#f59e0b' : '#ef4444';
+  document.getElementById('cmp-quality').innerHTML =
+    `<div class="metrics-row" style="margin-bottom:10px;">
+      ${card(dq.gt_defective,'GT дефектных','#e0e0e0')}${card(dq.gt_normal,'GT нормальных','#e0e0e0')}
+      ${card(dq.tp,'TP верно дефект.','#22c55e')}${card(dq.tn,'TN верно норм.','#22c55e')}
+      ${card(dq.fp,'FP ложная тревога','#ef4444')}${card(dq.fn,'FN пропущено','#f59e0b')}
+    </div>
+    <div class="metrics-row" style="margin-bottom:10px;">
+      ${card(pct(dq.accuracy),'Accuracy','#e0e0e0')}${card(pct(dq.precision),'Precision','#e0e0e0')}
+      ${card(pct(dq.recall),'Recall','#e0e0e0')}${card(pct(dq.f1),'F1',f1Color)}
+      ${card(pct(dq.mean_pixel_iou),'Mean Pixel IoU',iouColor)}${card(pct(dq.mean_pixel_f1),'Mean Pixel F1',iouColor)}
+    </div>
+    <div style="font-size:0.76rem;color:#555;padding-top:8px;border-top:1px solid #1a2540;">
+      Оценено: <b>${dq.n_evaluated}</b> изображений &nbsp;·&nbsp; threshold: <b>${dq.threshold_used}</b>
+    </div>`;
+}
+
+function renderCompare(data) {
+  renderCmpModeRows(data.modes);
+  renderCmpSummary(data);
+  renderCmpAmdahl(data);
+  if (data.detection_quality) renderCmpQuality(data.detection_quality);
+  document.getElementById('out-compare').style.display = 'flex';
+}
+
+function renderCompare(data) {
+  const modes = data.modes;
+  const maxWall = Math.max(...modes.map(m => m.wall_time_ms));
+  const minWall = Math.min(...modes.map(m => m.wall_time_ms));
+  const seqWall = (modes.find(m => m.mode === 'sequential') || {wall_time_ms: 1}).wall_time_ms;
+
+  // Сводка
+  document.getElementById('cmp-summary').innerHTML = [
+    [data.n_images,  'Изображений'],
+    [data.workers,   'Воркеров'],
+    [minWall.toFixed(0)+' мс', 'Лучший режим'],
+    [seqWall.toFixed(0)+' мс', 'Sequential'],
+    [(seqWall/minWall).toFixed(2)+'×', 'Макс. speedup'],
+    [modes.length, 'Режимов протестировано'],
+  ].map(([v,l]) => `<div class="metric-card"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+
+  // Таблица
+  const sorted = [...modes].sort((a,b) => a.wall_time_ms - b.wall_time_ms);
+
+  document.getElementById('cmp-tbody').innerHTML = modes.map((m, idx) => {
+    const rank    = sorted.findIndex(s => s.mode === m.mode) + 1;
+    const isBest  = m.wall_time_ms === minWall;
+    const barPct  = (m.wall_time_ms / maxWall * 100).toFixed(1);
+    const sp      = m.speedup_vs_sequential;
+    const spClass = sp > 1.05 ? 'gain' : sp < 0.95 ? 'slow' : '';
+    const spText  = sp === 1.0 ? '1.00× (baseline)' : sp.toFixed(3) + '×';
+    return `<tr class="${isBest ? 'best-row' : ''}">
+      <td style="color:#666;font-size:0.75rem">${rank}</td>
+      <td>
+        <span class="mode-tag">${m.mode}</span><br>
+        <span style="font-size:0.75rem;color:#aaa">${m.label}</span>
+        ${isBest ? ' <span style="color:#22c55e;font-size:0.72rem">✓ ЛУЧШИЙ</span>' : ''}
+      </td>
+      <td style="font-weight:700;color:${isBest ? '#22c55e' : '#e0e0e0'}">${m.wall_time_ms.toFixed(1)}</td>
+      <td>${m.avg_time_ms.toFixed(3)}</td>
+      <td><span class="speedup-badge ${spClass}">${spText}</span></td>
+      <td class="bar-cell">
+        <div class="bar-bg">
+          <div class="bar-fill ${isBest ? 'best' : ''}" style="width:${barPct}%"></div>
+        </div>
+        <div style="font-size:0.68rem;color:#666;margin-top:2px">${barPct}% от макс.</div>
+      </td>
+      <td>${m.total_defects_found}</td>
+      <td>${m.total_defects_filtered}</td>
+    </tr>`;
+  }).join('');
+
+  // Амдал
+  const cpuMode = modes.find(m => m.mode === 'parallel_cpu');
+  const imgMode = modes.find(m => m.mode === 'parallel_images');
+  const combMode = modes.find(m => m.mode === 'parallel_combined');
+  const gpuMode  = modes.find(m => m.mode === 'parallel_gpu');
+
+  let amdahlHtml = `<b>Анализ результатов (${data.n_images} изображений, воркеров: ${data.workers})</b><br><br>`;
+  amdahlHtml += `<b>Закон Амдала:</b> Speedup = 1 / ((1−p) + p/N), где p — параллельная доля, N — число воркеров.<br>`;
+  amdahlHtml += `Теоретический предел при N→∞: Speedup_max = 1/(1−p).<br><br>`;
+
+  if (cpuMode && cpuMode.speedup_vs_sequential !== 1.0) {
+    const sp = cpuMode.speedup_vs_sequential;
+    const N  = data.workers;
+    const p  = N > 1 && sp > 0 ? (N*(sp-1)/(sp*(N-1))).toFixed(4) : '?';
+    amdahlHtml += `<b>parallel_cpu</b> (дефекты): speedup = ${sp.toFixed(3)}× при N=${N} → параллельная доля p ≈ ${p}<br>`;
+  }
+  if (imgMode && imgMode.speedup_vs_sequential !== 1.0) {
+    amdahlHtml += `<b>parallel_images</b> (фото): speedup = ${imgMode.speedup_vs_sequential.toFixed(3)}× при N=${data.workers}<br>`;
+  }
+  if (gpuMode && gpuMode.speedup_vs_sequential !== 1.0) {
+    amdahlHtml += `<b>parallel_gpu</b>: speedup = ${gpuMode.speedup_vs_sequential.toFixed(3)}×<br>`;
+  }
+  if (combMode && combMode.speedup_vs_sequential !== 1.0) {
+    amdahlHtml += `<b>parallel_combined</b> (фото+дефекты): speedup = ${combMode.speedup_vs_sequential.toFixed(3)}×<br>`;
+  }
+
+  const bestMode = modes.find(m => m.wall_time_ms === minWall);
+  amdahlHtml += `<br><b>Вывод:</b> Наилучший результат показал режим <b>${bestMode.label}</b> — `;
+  amdahlHtml += `wall time ${bestMode.wall_time_ms.toFixed(1)} мс, speedup ${bestMode.speedup_vs_sequential.toFixed(3)}× относительно sequential.`;
+
+  document.getElementById('cmp-amdahl').innerHTML = amdahlHtml;
+
+  // ── Качество детекции ──────────────────────────────────────────────────
+  const dq = data.detection_quality;
+  const qWrap = document.getElementById('cmp-quality-wrap');
+  if (dq) {
+    qWrap.style.display = '';
+    const pct = v => (v * 100).toFixed(1) + '%';
+    const card = (v, l, col) =>
+      `<div class="metric-card"><div class="val"${col ? ` style="color:${col}"` : ''}>${v}</div><div class="lbl">${l}</div></div>`;
+
+    // Строка 1: GT counts + confusion matrix
+    let qHtml = `<div class="metrics-row" style="margin-bottom:10px;">
+      ${card(dq.gt_defective,  'GT дефектных',          '#e0e0e0')}
+      ${card(dq.gt_normal,     'GT нормальных',          '#e0e0e0')}
+      ${card(dq.tp,            'TP верно дефектных',     '#22c55e')}
+      ${card(dq.tn,            'TN верно нормальных',    '#22c55e')}
+      ${card(dq.fp,            'FP ложная тревога',      '#ef4444')}
+      ${card(dq.fn,            'FN пропущено дефектов',  '#f59e0b')}
+    </div>`;
+
+    // Строка 2: метрики качества
+    const f1Color  = dq.f1  >= 0.7 ? '#22c55e' : dq.f1  >= 0.5 ? '#f59e0b' : '#ef4444';
+    const iouColor = dq.mean_pixel_iou >= 0.5 ? '#22c55e' : dq.mean_pixel_iou >= 0.3 ? '#f59e0b' : '#ef4444';
+    qHtml += `<div class="metrics-row" style="margin-bottom:10px;">
+      ${card(pct(dq.accuracy),       'Accuracy (изобр.)',    '#e0e0e0')}
+      ${card(pct(dq.precision),      'Precision (изобр.)',   '#e0e0e0')}
+      ${card(pct(dq.recall),         'Recall (изобр.)',      '#e0e0e0')}
+      ${card(pct(dq.f1),             'F1 (изобр.)',          f1Color)}
+      ${card(pct(dq.mean_pixel_iou), 'Mean Pixel IoU',       iouColor)}
+      ${card(pct(dq.mean_pixel_f1),  'Mean Pixel F1',        iouColor)}
+    </div>`;
+
+    // Подпись
+    qHtml += `<div style="font-size:0.76rem;color:#555;padding-top:8px;border-top:1px solid #1a2540;">
+      Оценено: <b>${dq.n_evaluated}</b> изображений &nbsp;·&nbsp;
+      threshold: <b>${dq.threshold_used}</b>
+    </div>`;
+
+    document.getElementById('cmp-quality').innerHTML = qHtml;
+  } else {
+    qWrap.style.display = 'none';
+  }
+
+  document.getElementById('out-compare').style.display = 'flex';
+}
+
+// ─── Утилита для чтения ошибок FastAPI ───
+function extractError(errJson) {
+  if (!errJson) return 'Неизвестная ошибка';
+  if (typeof errJson.detail === 'string') return errJson.detail;
+  if (Array.isArray(errJson.detail)) {
+    return errJson.detail.map(e => `${e.loc ? e.loc.join('.')+': ' : ''}${e.msg}`).join('; ');
+  }
+  if (typeof errJson === 'string') return errJson;
+  return JSON.stringify(errJson.detail || errJson);
+}
+
+// Читает тело ошибки HTTP — сначала пробует JSON, потом текст
+async function getErrMsg(resp) {
+  try { return extractError(await resp.json()); } catch (_) {}
+  try { return await resp.text(); } catch (_) {}
+  return `HTTP ${resp.status}`;
+}
+
+// ─── Калибровка image-level gate ───
+async function runCalibrate() {
+  const percentile = +document.getElementById('cal-percentile').value;
+  const source = document.querySelector('input[name="cal-source"]:checked').value;
+  const btn = document.getElementById('btn-calibrate');
+  btn.disabled = true; btn.textContent = '⏳ Обработка...';
+  const statusEl = document.getElementById('cal-status');
+  statusEl.style.display = 'none';
+  statusEl.style.color = '#22c55e';
+
+  try {
+    const resp = await fetch('/calibrate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source, percentile}),
+    });
+    if (!resp.ok) throw new Error(await getErrMsg(resp));
+    const d = await resp.json();
+
+    statusEl.style.display = 'block';
+    const ts = d.test_good, tr = d.train_good;
+    let html = `<b>Порог установлен: ${d.threshold}</b> (p${d.percentile}, источник: ${d.source})<br>`;
+    if (ts && ts.n > 0) {
+      html += `<span style="color:#22c55e">test/good (${ts.n} фото):</span> `+
+              `score ${ts.min}–${ts.max}, mean=${ts.mean}, std=${ts.std}, p95=${ts.p95}<br>`;
+    }
+    if (tr && tr.n > 0) {
+      html += `<span style="color:#f59e0b">train/good (${tr.n} фото):</span> `+
+              `score ${tr.min}–${tr.max}, mean=${tr.mean}, std=${tr.std}, p95=${tr.p95}`;
+      if (d.warning) html += `<br><span style="color:#f59e0b">⚠ ${d.warning}</span>`;
+    }
+    statusEl.innerHTML = html;
+    document.getElementById('cal-current').textContent =
+      `Gate активен: score < ${d.threshold} → нормальное изображение → 0 дефектов`;
+  } catch(e) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#e94560';
+    statusEl.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'КАЛИБРОВАТЬ';
+  }
+}
+
+async function loadCalibrationStatus() {
+  try {
+    const r = await fetch('/calibrate');
+    const d = await r.json();
+    const el = document.getElementById('cal-current');
+    if (d.gate_enabled) {
+      const s = d.saved;
+      const extra = s
+        ? ` · источник: ${s.source} · p${s.percentile} · сохранено ${s.saved_at}`
+        : '';
+      el.style.color = '#22c55e';
+      el.textContent = `Gate активен: порог = ${d.threshold}${extra}`;
+    } else {
+      el.style.color = '#f59e0b';
+      el.textContent = 'Gate НЕ активен — откалибруйте для честного результата';
+    }
+  } catch {}
+}
+
+// ─── Метрики качества ───
+function parseFloats(id) {
+  return document.getElementById(id).value.split(',').map(s=>parseFloat(s.trim())).filter(v=>!isNaN(v));
+}
+
+async function runMetrics() {
+  const mode    = document.querySelector('input[name="mode-m"]:checked').value;
+  const workers = snap(+document.getElementById('workers-m').value);
+  const body = {
+    subfolder:  document.getElementById('met-subfolder').value,
+    mode, workers,
+    max_images: +document.getElementById('met-max').value,
+    thresholds: parseFloats('met-thresholds'),
+    s_mins:     parseFloats('met-smins'),
+    s_maxs:     parseFloats('met-smaxs'),
+  };
+  if (!body.thresholds.length || !body.s_mins.length || !body.s_maxs.length) {
+    showErr('err-metrics','Введите хотя бы одно значение в каждой сетке.'); return;
+  }
+
+  const btn = document.getElementById('btn-metrics');
+  btn.disabled = true; btn.textContent = '⏳ Оптимизация...';
+  hideErr('err-metrics');
+  document.getElementById('ph-metrics').style.display = 'none';
+  document.getElementById('out-metrics').style.display = 'none';
+  document.getElementById('out-metrics-all').style.display = 'none';
+  document.getElementById('spin-metrics').classList.add('active');
+
+  const prog = document.getElementById('met-progress');
+  const progFill = document.getElementById('met-progress-fill');
+  prog.classList.add('visible');
+  document.getElementById('met-progress-label').textContent = `Режим: ${mode} · Идёт перебор ${body.thresholds.length*body.s_mins.length*body.s_maxs.length} комбинаций...`;
+  progFill.style.width = '5%';
+  let pct = 5;
+  const timer = setInterval(() => { pct = Math.min(pct+2, 88); progFill.style.width = pct+'%'; }, 1000);
+
+  try {
+    const resp = await fetch('/optimize', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    clearInterval(timer); progFill.style.width = '100%';
+    if (!resp.ok) throw new Error(await getErrMsg(resp));
+    renderMetrics(await resp.json());
+  } catch(e) {
+    clearInterval(timer);
+    showErr('err-metrics','Ошибка: ' + e.message);
+  } finally {
+    document.getElementById('spin-metrics').classList.remove('active');
+    prog.classList.remove('visible');
+    btn.disabled = false; btn.textContent = '▶ ОПТИМИЗИРОВАТЬ';
+  }
+}
+
+function renderMetrics(data) {
+  const b = data.best || {};
+  document.getElementById('met-summary').innerHTML = [
+    [data.n_images,   'Изображений'],
+    [data.n_with_gt,  'С GT масками'],
+    [data.n_combos,   'Комбинаций'],
+    [data.elapsed_ms.toFixed(1)+' мс', 'Время перебора'],
+    [data.mode,       'Режим'],
+  ].map(([v,l]) => `<div class="metric-card"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+
+  const f1C  = v => v >= 0.7 ? '#22c55e' : v >= 0.5 ? '#f59e0b' : '#e0e0e0';
+  const iouC = v => v >= 0.5 ? '#22c55e' : v >= 0.3 ? '#f59e0b' : '#e0e0e0';
+  const metSubfolder = document.getElementById('met-subfolder').value;
+
+  document.getElementById('met-best-params').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;">
+      <div class="metric-card"><div class="val" style="color:${f1C(b.f1||0)}">${(b.f1||0).toFixed(4)}</div><div class="lbl">F1 (лучший)</div></div>
+      <div class="metric-card"><div class="val" style="color:${iouC(b.iou||0)}">${(b.iou||0).toFixed(4)}</div><div class="lbl">IoU</div></div>
+      <div class="metric-card"><div class="val" style="color:${f1C(b.precision||0)}">${(b.precision||0).toFixed(4)}</div><div class="lbl">Precision</div></div>
+      <div class="metric-card"><div class="val" style="color:${f1C(b.recall||0)}">${(b.recall||0).toFixed(4)}</div><div class="lbl">Recall</div></div>
+      <div class="metric-card"><div class="val" style="color:#e94560">${b.threshold ?? '—'}</div><div class="lbl">Threshold</div></div>
+      <div class="metric-card"><div class="val" style="color:#e94560">${b.S_min ?? '—'}</div><div class="lbl">S_min</div></div>
+      <div class="metric-card"><div class="val" style="color:#e94560">${b.S_max ?? '—'}</div><div class="lbl">S_max</div></div>
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn-all" style="padding:8px 20px;font-size:0.82rem;background:#1a4a8a;"
+        onclick="applyBestParams(${b.threshold??0.5}, ${b.S_min??10}, ${b.S_max??500}, '${metSubfolder}')">
+        → Применить в Сравнении (threshold=${b.threshold}, S_min=${b.S_min}, S_max=${b.S_max})
+      </button>
+    </div>`;
+
+  document.getElementById('met-top10-tbody').innerHTML = (data.top10 || []).map((r, i) => `<tr>
+    <td style="color:#666">${i+1}</td>
+    <td>${r.threshold}</td><td>${r.S_min}</td><td>${r.S_max}</td>
+    <td style="font-weight:700;color:${f1C(r.f1)}">${r.f1}</td>
+    <td style="color:${iouC(r.iou)}">${r.iou}</td>
+    <td style="color:${f1C(r.precision)}">${r.precision}</td>
+    <td style="color:${f1C(r.recall)}">${r.recall}</td>
+    <td><button onclick="applyBestParams(${r.threshold},${r.S_min},${r.S_max},'${metSubfolder}')"
+      style="background:#1a3060;border:none;color:#88aaee;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.72rem;">→</button></td>
+  </tr>`).join('');
+
+  document.getElementById('out-metrics').style.display = 'flex';
+}
+
+async function runMetricsAll() {
+  const body = {
+    subfolder:  document.getElementById('met-subfolder').value,
+    workers:    snap(+document.getElementById('workers-m').value),
+    max_images: +document.getElementById('met-max').value,
+    thresholds: parseFloats('met-thresholds'),
+    s_mins:     parseFloats('met-smins'),
+    s_maxs:     parseFloats('met-smaxs'),
+  };
+  if (!body.thresholds.length || !body.s_mins.length || !body.s_maxs.length) {
+    showErr('err-metrics','Введите хотя бы одно значение в каждой сетке.'); return;
+  }
+
+  const btn = document.getElementById('btn-metrics-all');
+  btn.disabled = true; btn.textContent = '⏳ Идёт тестирование...';
+  hideErr('err-metrics');
+  document.getElementById('ph-metrics').style.display = 'none';
+  document.getElementById('out-metrics').style.display = 'none';
+  document.getElementById('out-metrics-all').style.display = 'none';
+  document.getElementById('spin-metrics').classList.add('active');
+  document.getElementById('met-all-tbody').innerHTML = '';
+  document.getElementById('met-all-top10-container').innerHTML = '';
+
+  const prog      = document.getElementById('met-progress');
+  const progFill  = document.getElementById('met-progress-fill');
+  const progLabel = document.getElementById('met-progress-label');
+  prog.classList.add('visible');
+  progFill.style.width = '3%';
+
+  const allModes = [];
+  let modesDone = 0, totalModes = 4;
+
+  try {
+    await fetchStream('/optimize_all', body, chunk => {
+      if (chunk.type === 'error') { showErr('err-metrics', chunk.detail); return; }
+      if (chunk.type === 'start') {
+        totalModes = chunk.n_modes || 4;
+        progLabel.textContent = `Запускаем ${totalModes} режима · ${chunk.n_combos} комбинаций каждый...`;
+        document.getElementById('out-metrics-all').style.display = 'flex';
+      } else if (chunk.type === 'mode') {
+        modesDone++;
+        allModes.push(chunk.data);
+        progFill.style.width = (5 + Math.round(modesDone / totalModes * 90)) + '%';
+        progLabel.textContent = `Режим ${modesDone}/${totalModes}: ${chunk.data.label} (${chunk.data.elapsed_ms.toFixed(0)} мс)`;
+        renderMetricsAllPartial(allModes, null);
+      } else if (chunk.type === 'done') {
+        progFill.style.width = '100%';
+        renderMetricsAll(chunk);
+      }
+    });
+  } catch(e) {
+    showErr('err-metrics','Ошибка: ' + e.message);
+  } finally {
+    document.getElementById('spin-metrics').classList.remove('active');
+    prog.classList.remove('visible');
+    btn.disabled = false; btn.textContent = '⚡ ВСЕ 4 РЕЖИМА';
+  }
+}
+
+function renderMetricsAllPartial(modes, subfolder) {
+  const minMs = Math.min(...modes.map(m => m.elapsed_ms));
+  const maxMs = Math.max(...modes.map(m => m.elapsed_ms));
+  const f1Color  = v => v >= 0.7 ? '#22c55e' : v >= 0.5 ? '#f59e0b' : '#e0e0e0';
+  const iouColor = v => v >= 0.5 ? '#22c55e' : v >= 0.3 ? '#f59e0b' : '#e0e0e0';
+  document.getElementById('met-all-tbody').innerHTML = modes.map((m, i) => {
+    const isBest = m.elapsed_ms === minMs;
+    const barPct = (m.elapsed_ms / maxMs * 100).toFixed(1);
+    const sp = m.speedup; const spClass = sp > 1.05 ? 'gain' : sp < 0.95 ? 'slow' : '';
+    const spText = sp === 1.0 ? '1.00× (baseline)' : sp.toFixed(3)+'×';
+    const b = m.best || {};
+    return `<tr class="${isBest?'best-row':''}">
+      <td style="color:#666">${i+1}</td>
+      <td><span class="mode-tag">${m.mode}</span><br><span style="font-size:0.75rem;color:#aaa">${m.label}</span>
+        ${isBest?' <span style="color:#22c55e;font-size:0.72rem">✓ БЫСТРЕЕ</span>':''}</td>
+      <td style="font-weight:700;color:${isBest?'#22c55e':'#e0e0e0'}">${m.elapsed_ms.toFixed(1)}</td>
+      <td><span class="speedup-badge ${spClass}">${spText}</span></td>
+      <td class="bar-cell"><div class="bar-bg"><div class="bar-fill ${isBest?'best':''}" style="width:${barPct}%"></div></div></td>
+      <td>${b.threshold??'—'}</td><td>${b.S_min??'—'}</td><td>${b.S_max??'—'}</td>
+      <td style="color:${f1Color(b.f1||0)};font-weight:700">${(b.f1||0).toFixed(4)}</td>
+      <td style="color:${iouColor(b.iou||0)}">${(b.iou||0).toFixed(4)}</td>
+      <td style="color:${f1Color(b.precision||0)}">${(b.precision||0).toFixed(4)}</td>
+      <td style="color:${f1Color(b.recall||0)}">${(b.recall||0).toFixed(4)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMetricsAll(data) {
+  const modes = data.modes;
+  const minMs = Math.min(...modes.map(m => m.elapsed_ms));
+  const maxMs = Math.max(...modes.map(m => m.elapsed_ms));
+  const seqMs = (modes.find(m => m.mode === 'sequential') || {elapsed_ms: 1}).elapsed_ms;
+
+  document.getElementById('met-all-summary').innerHTML = [
+    [data.n_images,   'Изображений'],
+    [data.n_with_gt,  'С GT масками'],
+    [data.n_combos,   'Комбинаций'],
+    [data.workers,    'Воркеров (CPU)'],
+    [minMs.toFixed(0)+' мс', 'Лучший режим'],
+    [(seqMs/minMs).toFixed(2)+'×', 'Макс. speedup'],
+  ].map(([v,l]) => `<div class="metric-card"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+
+  const f1Color  = v => v >= 0.7 ? '#22c55e' : v >= 0.5 ? '#f59e0b' : '#e0e0e0';
+  const iouColor = v => v >= 0.5 ? '#22c55e' : v >= 0.3 ? '#f59e0b' : '#e0e0e0';
+
+  document.getElementById('met-all-tbody').innerHTML = modes.map((m, i) => {
+    const isBest = m.elapsed_ms === minMs;
+    const barPct = (m.elapsed_ms / maxMs * 100).toFixed(1);
+    const sp = m.speedup;
+    const spClass = sp > 1.05 ? 'gain' : sp < 0.95 ? 'slow' : '';
+    const spText  = sp === 1.0 ? '1.00× (baseline)' : sp.toFixed(3)+'×';
+    const b = m.best || {};
+    return `<tr class="${isBest?'best-row':''}">
+      <td style="color:#666">${i+1}</td>
+      <td>
+        <span class="mode-tag">${m.mode}</span><br>
+        <span style="font-size:0.75rem;color:#aaa">${m.label}</span>
+        ${isBest?' <span style="color:#22c55e;font-size:0.72rem">✓ БЫСТРЕЕ</span>':''}
+      </td>
+      <td style="font-weight:700;color:${isBest?'#22c55e':'#e0e0e0'}">${m.elapsed_ms.toFixed(1)}</td>
+      <td><span class="speedup-badge ${spClass}">${spText}</span></td>
+      <td class="bar-cell">
+        <div class="bar-bg"><div class="bar-fill ${isBest?'best':''}" style="width:${barPct}%"></div></div>
+      </td>
+      <td>${b.threshold ?? '—'}</td>
+      <td>${b.S_min ?? '—'}</td>
+      <td>${b.S_max ?? '—'}</td>
+      <td style="color:${f1Color(b.f1||0)};font-weight:700">${(b.f1||0).toFixed(4)}</td>
+      <td style="color:${iouColor(b.iou||0)}">${(b.iou||0).toFixed(4)}</td>
+      <td style="color:${f1Color(b.precision||0)}">${(b.precision||0).toFixed(4)}</td>
+      <td style="color:${f1Color(b.recall||0)}">${(b.recall||0).toFixed(4)}</td>
+    </tr>`;
+  }).join('');
+
+  // Топ-10 для каждого режима оптимизации
+  const allMetSubfolder = data.subfolder && data.subfolder !== 'все' ? data.subfolder : '';
+  const top10Html = modes.map(m => {
+    const b = m.best || {};
+    const rows = (m.top10 || []).map((r, i) => {
+      const isTop = i === 0;
+      return `<tr${isTop ? ' style="background:#0f2a18"' : ''}>
+        <td style="color:${isTop?'#22c55e':'#666'}">${i+1}</td>
+        <td>${r.threshold}</td><td>${r.S_min}</td><td>${r.S_max}</td>
+        <td style="font-weight:700;color:${f1Color(r.f1)}">${r.f1}</td>
+        <td style="color:${iouColor(r.iou)}">${r.iou}</td>
+        <td style="color:${f1Color(r.precision)}">${r.precision}</td>
+        <td style="color:${f1Color(r.recall)}">${r.recall}</td>
+        <td><button onclick="applyBestParams(${r.threshold},${r.S_min},${r.S_max},'${allMetSubfolder}')"
+          style="background:#1a3060;border:none;color:#88aaee;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.72rem;">→</button></td>
+      </tr>`;
+    }).join('');
+    return `<div class="table-wrap" style="margin-top:0">
+      <div class="tbl-header" style="font-size:0.8rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>Топ-10 · <span class="mode-tag">${m.mode}</span>
+        <span style="color:#aaa;font-weight:400"> — ${m.label}</span></span>
+        <span style="color:#22c55e;margin-left:auto">best F1=${(b.f1||0).toFixed(4)}</span>
+        <button onclick="applyBestParams(${b.threshold??0.5},${b.S_min??10},${b.S_max??500},'${allMetSubfolder}')"
+          style="background:#1a4a8a;border:none;color:#88ccff;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:0.75rem;">
+          → Применить (${b.threshold}, ${b.S_min}, ${b.S_max})
+        </button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="compare-table" style="font-size:0.79rem">
+          <thead><tr>
+            <th>#</th><th>Threshold</th><th>S_min</th><th>S_max</th>
+            <th>F1</th><th>IoU</th><th>Precision</th><th>Recall</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('met-all-top10-container').innerHTML = top10Html;
+  document.getElementById('out-metrics-all').style.display = 'flex';
+}
+
+// ─── Применить лучшие параметры в Сравнении ───
+function applyBestParams(thr, smin, smax, subfolder) {
+  document.getElementById('cmp-thr').value   = thr;
+  document.getElementById('cmp-smin').value  = smin;
+  document.getElementById('cmp-smax').value  = smax;
+  if (subfolder !== undefined && subfolder !== '') {
+    const sel = document.getElementById('cmp-subfolder');
+    const opt = [...sel.options].find(o => o.value === subfolder);
+    if (opt) sel.value = subfolder;
+  }
+  switchTab('compare');
+  // Мигание кнопки запуска — визуальный сигнал что параметры применены
+  const btn = document.getElementById('btn-compare');
+  btn.style.background = '#1a6640';
+  btn.textContent = '✓ Параметры применены — нажмите для запуска';
+  setTimeout(() => {
+    btn.style.background = '';
+    btn.textContent = '⚡ ПРОВЕРИТЬ ВСЕ РЕЖИМЫ';
+  }, 2500);
+}
+
+// ─── Утилиты ───
+function setLoading(tab, on) {
+  document.getElementById(`spin-${tab}`).classList.toggle('active', on);
+  const btn = document.getElementById(`btn-${tab}`);
+  if (!btn) return;
+  btn.disabled = on;
+  if (tab === 'single') btn.textContent = on ? '⏳ Анализ...' : '▶ ЗАПУСТИТЬ';
+  else if (tab === 'dir') btn.textContent = on ? '⏳ Анализ...' : '▶ АНАЛИЗИРОВАТЬ';
+}
+function showErr(id, msg) { const el=document.getElementById(id); el.textContent=msg; el.classList.add('visible'); }
+function hideErr(id) { document.getElementById(id).classList.remove('visible'); }
+
+loadImages();
+loadSubfolders();
+loadCalibrationStatus();
+
+// ─── Бинаризация: текущие параметры ───────────────────────────────────────
+async function loadBinarizeParams() {
+  try {
+    const r = await fetch('/binarize_params');
+    const d = await r.json();
+    applyBinarizeParamsToForm(d);
+    renderBinarizeCurrent(d);
+  } catch(e) {
+    document.getElementById('binopt-current').textContent = 'Ошибка загрузки: ' + e.message;
+  }
+}
+
+function applyBinarizeParamsToForm(d) {
+  document.getElementById('bp-threshold').value = d.threshold ?? 0.5;
+  document.getElementById('bp-min-area').value  = d.min_area ?? 0;
+  document.getElementById('bp-mk').value        = d.morphology_kernel ?? 3;
+  document.getElementById('bp-mi').value        = d.morphology_iterations ?? 1;
+  document.getElementById('bp-blur').value      = d.gaussian_blur_kernel ?? 0;
+}
+
+function applyBinParams(thr, minArea, mk, mi, blur) {
+  const d = {threshold:thr, min_area:minArea, morphology_kernel:mk, morphology_iterations:mi, gaussian_blur_kernel:blur};
+  applyBinarizeParamsToForm(d);
+  renderBinarizeCurrent(d);
+}
+
+function renderBinarizeCurrent(d) {
+  const el = document.getElementById('binopt-current');
+  const row = (label, val) => `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #1a2740;padding:3px 0;">
+    <span style="color:#888;">${label}</span><b style="color:#e0e0e0;">${val}</b></div>`;
+  el.innerHTML =
+    row('threshold',             d.threshold)           +
+    row('min_area',              d.min_area)             +
+    row('morphology_kernel',     d.morphology_kernel)    +
+    row('morphology_iterations', d.morphology_iterations)+
+    row('gaussian_blur_kernel',  d.gaussian_blur_kernel) +
+    (d.loss != null ? row('loss (при сохранении)', d.loss.toFixed(6)) : '');
+}
+
+async function setBinarizeParams() {
+  const body = {
+    threshold:             +document.getElementById('bp-threshold').value,
+    min_area:              +document.getElementById('bp-min-area').value,
+    morphology_kernel:     +document.getElementById('bp-mk').value,
+    morphology_iterations: +document.getElementById('bp-mi').value,
+    gaussian_blur_kernel:  +document.getElementById('bp-blur').value,
+  };
+  try {
+    const r = await fetch('/binarize_params', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const d = await r.json();
+    renderBinarizeCurrent(d.applied_params);
+    alert('Параметры сохранены и применены.');
+  } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// ─── Бинаризация: grid search (streaming) ────────────────────────────────
+async function runBinarizeOptimize() {
+  const btn = document.getElementById('btn-binopt');
+  btn.disabled = true; btn.textContent = '⏳ Grid search...';
+
+  const progWrap  = document.getElementById('binopt-progress');
+  const progLabel = document.getElementById('binopt-progress-label');
+  const progFill  = document.getElementById('binopt-progress-fill');
+  const errEl     = document.getElementById('err-binopt');
+  const resultWrap = document.getElementById('binopt-result-wrap');
+  document.getElementById('ph-binopt').style.display = 'none';
+  progWrap.classList.add('visible');
+  progFill.style.width = '2%';
+  progLabel.textContent = 'Запуск...';
+  errEl.classList.remove('visible');
+  resultWrap.innerHTML = '';
+
+  const body = {
+    subfolder:  document.getElementById('binopt-subfolder').value,
+    max_images: +document.getElementById('binopt-max-images').value,
+    workers:    +document.getElementById('binopt-workers').value,
+    use_gpu:    document.getElementById('binopt-use-gpu').checked,
+    gpu_exact:  document.getElementById('binopt-gpu-exact').checked,
+  };
+
+  try {
+    await fetchStream('/binarize_optimize', body, chunk => {
+      if (chunk.type === 'error') {
+        errEl.textContent = chunk.detail; errEl.classList.add('visible'); return;
+      }
+      if (chunk.type === 'start') {
+        progLabel.textContent = `Grid search: ${chunk.n_combos} комбинаций × ${chunk.n_images} изображений...`;
+        progFill.style.width = '3%';
+      } else if (chunk.type === 'progress') {
+        const pct = Math.round(chunk.done / chunk.total * 100);
+        progFill.style.width = pct + '%';
+        progLabel.textContent = `${chunk.done}/${chunk.total} комбинаций (${pct}%)`;
+      } else if (chunk.type === 'done') {
+        progFill.style.width = '100%';
+        resultWrap.innerHTML = renderBinarizeOptResultHtml(chunk);
+        applyBinarizeParamsToForm(chunk.applied_params);
+        renderBinarizeCurrent(chunk.applied_params);
+      }
+    });
+  } catch(e) {
+    errEl.textContent = 'Ошибка: ' + e.message; errEl.classList.add('visible');
+  } finally {
+    progWrap.classList.remove('visible');
+    btn.disabled = false; btn.textContent = '🔍 ЗАПУСТИТЬ ОПТИМИЗАЦИЮ';
+  }
+}
+
+function renderBinarizeOptResultHtml(d) {
+  const pct = v => (v * 100).toFixed(1) + '%';
+  const card = (v, label, color) => `<div style="background:#0d1b2a;border:1px solid ${color}44;border-radius:8px;padding:10px 14px;text-align:center;flex:1;min-width:110px;">
+    <div style="font-size:1.3rem;font-weight:700;color:${color};">${v}</div>
+    <div style="font-size:0.72rem;color:#888;margin-top:3px;">${label}</div></div>`;
+  const b = d.best; const bp = b.params; const bm = b.metrics;
+  const lossColor = b.loss < 0.05 ? '#22c55e' : b.loss < 0.15 ? '#facc15' : '#ef4444';
+  return `
+    <div class="table-wrap">
+      <div class="tbl-header">Результат · ${d.n_images} изобр. (${d.n_with_gt} с GT) · ${d.n_combos} комбинаций · ${d.elapsed_ms.toFixed(0)} мс</div>
+      <div style="padding:14px 16px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          ${card(b.loss.toFixed(4),'Loss (ниже = лучше)',lossColor)}
+          ${card(pct(bm.precision),'Precision','#5588cc')}
+          ${card(pct(bm.recall),'Recall','#22c55e')}
+          ${card(pct(bm.f1),'F1','#a78bfa')}
+        </div>
+        <div style="font-size:0.8rem;font-weight:600;color:#5588cc;margin-bottom:6px;">Лучшие параметры</div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px;">
+          ${['threshold','min_area','morphology_kernel','morphology_iterations','gaussian_blur_kernel'].map(k =>
+            `<div style="background:#12192b;border-radius:6px;padding:8px;text-align:center;">
+              <div style="font-size:1.1rem;font-weight:700;color:#e94560;">${bp[k]}</div>
+              <div style="font-size:0.68rem;color:#666;margin-top:2px;">${k.replace(/_/g,'<br>')}</div>
+            </div>`).join('')}
+        </div>
+        <button class="btn-all" onclick="applyBinParams(${bp.threshold},${bp.min_area},${bp.morphology_kernel},${bp.morphology_iterations},${bp.gaussian_blur_kernel});"
+          style="width:auto;padding:7px 16px;margin-bottom:16px;font-size:0.82rem;">
+          ✓ Применить лучшие параметры в форму
+        </button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <div class="tbl-header">Топ-10 комбинаций</div>
+      <div style="overflow-x:auto;">
+        <table class="compare-table">
+          <thead><tr><th>#</th><th>Loss</th><th>Prec</th><th>Rec</th><th>F1</th>
+            <th>Thr</th><th>MinArea</th><th>MK</th><th>MI</th><th>Blur</th><th></th></tr></thead>
+          <tbody>${d.top10.map((r,i) => {
+            const p=r.params; const m=r.metrics;
+            const lc=r.loss<0.05?'#22c55e':r.loss<0.15?'#facc15':'#ef4444';
+            const f1c=m.f1>=0.7?'#22c55e':m.f1>=0.5?'#facc15':'#ef4444';
+            return `<tr>
+              <td style="color:#888;">${i+1}</td>
+              <td style="color:${lc};font-weight:700;">${r.loss.toFixed(4)}</td>
+              <td>${pct(m.precision)}</td><td>${pct(m.recall)}</td>
+              <td style="color:${f1c};font-weight:600;">${pct(m.f1)}</td>
+              <td>${p.threshold}</td><td>${p.min_area}</td>
+              <td>${p.morphology_kernel}</td><td>${p.morphology_iterations}</td>
+              <td>${p.gaussian_blur_kernel}</td>
+              <td><button onclick="applyBinParams(${p.threshold},${p.min_area},${p.morphology_kernel},${p.morphology_iterations},${p.gaussian_blur_kernel});"
+                style="padding:3px 8px;font-size:0.75rem;border-radius:4px;border:1px solid #5588cc;
+                background:transparent;color:#5588cc;cursor:pointer;">→</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+
+// GPU checkbox → show/hide exact option
+document.getElementById('binopt-use-gpu').addEventListener('change', function() {
+  document.getElementById('binopt-exact-wrap').style.display = this.checked ? 'flex' : 'none';
+});
+document.getElementById('binopt-exact-wrap').style.display = 'none';
+
+// Загружаем бинаризационные параметры при старте
+loadBinarizeParams();
+// Подгрузим subfolders в binopt-subfolder
+fetch('/subfolders').then(r=>r.json()).then(d=>{
+  const sel = document.getElementById('binopt-subfolder');
+  sel.innerHTML = '<option value="">Все (весь test/)</option>' +
+    d.subfolders.map(s=>`<option value="${s}">${s}</option>`).join('');
+}).catch(()=>{});
+</script>
+</body>
+</html>

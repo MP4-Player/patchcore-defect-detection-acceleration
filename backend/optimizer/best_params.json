@@ -1,0 +1,7 @@
+{
+  "threshold": 0.9,
+  "min_area": 500.0,
+  "morphology_kernel": 7,
+  "morphology_iterations": 3,
+  "gaussian_blur_kernel": 7
+}
