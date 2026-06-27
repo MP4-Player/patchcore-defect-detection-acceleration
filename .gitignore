@@ -1,0 +1,9 @@
+﻿__pycache__/
+*.pyc
+*.pyo
+server_stdout.txt
+server_stderr.txt
+server_stderr2.txt
+backend/storage/
+backend/models/baseline_map.npy
+*.log

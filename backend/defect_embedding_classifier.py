@@ -383,6 +383,64 @@ def prototype_accuracy(
 
 
 # ---------------------------------------------------------------------------
+# Вспомогательная: стратифицированный сплит с обработкой редких классов
+# ---------------------------------------------------------------------------
+
+def _prepare_stratified_split(
+    X: np.ndarray,
+    gt_labels: np.ndarray,
+    test_size: float = 0.5,
+    random_state: int = 42,
+    min_class_samples: int = 2,
+) -> Tuple[np.ndarray, np.ndarray, List[int], List[str]]:
+    """
+    StratifiedShuffleSplit с явной обработкой классов < min_class_samples образцов.
+
+    Классы с недостаточным числом образцов принудительно перемещаются в train,
+    а не вызывают тихий обход stratify или ложный Accuracy=100%.
+
+    Returns:
+        train_idx:        индексы обучающей выборки
+        test_idx:         индексы тестовой выборки (только из стратифицируемых классов)
+        excluded_classes: List[int] — классы исключённые из теста
+        warnings:         List[str] — текстовые предупреждения для UI
+    """
+    from sklearn.model_selection import StratifiedShuffleSplit as _SSS
+
+    classes, counts = np.unique(gt_labels, return_counts=True)
+    sufficient   = {int(c): int(n) for c, n in zip(classes, counts) if n >= min_class_samples}
+    insufficient = {int(c): int(n) for c, n in zip(classes, counts) if n < min_class_samples}
+
+    warnings_list: List[str] = []
+    for cls, cnt in insufficient.items():
+        name = DEFECT_TYPE_NAMES[cls] if 0 <= cls < len(DEFECT_TYPE_NAMES) else str(cls)
+        warnings_list.append(
+            f"Класс '{name}' не может быть стратифицирован ({cnt} экз. < {min_class_samples})"
+            f" — исключён из теста, перенесён в train"
+        )
+
+    excluded_classes = list(insufficient.keys())
+    can_stratify = np.array([int(l) in sufficient for l in gt_labels])
+
+    if can_stratify.sum() < 4 or len(sufficient) < 2:
+        warnings_list.append(
+            "Недостаточно данных для стратифицированного разбиения"
+            " — весь датасет используется как train (результат ненадёжен)"
+        )
+        return np.arange(len(X)), np.array([], dtype=int), excluded_classes, warnings_list
+
+    sub_idx           = np.where(can_stratify)[0]
+    forced_train_idx  = np.where(~can_stratify)[0]
+
+    sss = _SSS(n_splits=1, test_size=test_size, random_state=random_state)
+    tr_rel, te_rel = next(sss.split(X[sub_idx], gt_labels[sub_idx]))
+
+    train_idx = np.concatenate([forced_train_idx, sub_idx[tr_rel]])
+    test_idx  = sub_idx[te_rel]
+    return train_idx, test_idx, excluded_classes, warnings_list
+
+
+# ---------------------------------------------------------------------------
 # Метод 2: Linear classifier (supervised upper bound)
 # ---------------------------------------------------------------------------
 
@@ -394,20 +452,20 @@ def fit_linear_classifier(
     max_iter: int = 1000,
 ) -> Dict:
     """
-    Обучает LogisticRegression на PCA-эмбеддингах, split 50/50.
-    Это теоретический потолок линейной разделимости датасета.
+    Обучает LogisticRegression на PCA-эмбеддингах, stratified split 50/50.
 
     Returns dict:
-        clf:            обученный LogisticRegression (picklable)
-        train_accuracy: float
-        test_accuracy:  float
-        per_class_test: {class_id: accuracy}
-        train_idx, test_idx: индексы сплита
-        n_train, n_test: int
-        classes:        List[int]
+        clf:                     обученный LogisticRegression (picklable)
+        train_accuracy:          float
+        test_accuracy:           float
+        per_class_test:          {class_id: accuracy}
+        n_classes_in_test:       int — сколько уникальных классов в тестовой выборке
+        excluded_classes:        List[int] — классы исключённые из теста
+        stratification_warnings: List[str] — предупреждения о малых классах
+        n_train, n_test:         int
+        classes:                 List[int]
     """
     from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import StratifiedShuffleSplit
 
     n = len(X)
     classes = sorted(set(int(c) for c in gt_labels if c >= 0))
@@ -418,46 +476,61 @@ def fit_linear_classifier(
         pred = clf.predict(X)
         acc = float((pred == gt_labels).mean())
         return {
-            "clf": clf, "train_accuracy": acc, "test_accuracy": acc,
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
             "per_class_test": {}, "train_idx": list(range(n)), "test_idx": [],
             "n_train": n, "n_test": 0, "classes": classes,
+            "n_classes_in_test": 0, "excluded_classes": [],
+            "stratification_warnings": ["Недостаточно данных (<4 дефектов или <2 классов)"],
         }
 
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size,
-                                  random_state=random_state)
-    train_idx, test_idx = next(sss.split(X, gt_labels))
+    train_idx, test_idx, excl_cls, strat_warn = _prepare_stratified_split(
+        X, gt_labels, test_size=test_size, random_state=random_state
+    )
+
+    if len(test_idx) == 0:
+        clf = LogisticRegression(max_iter=max_iter, random_state=random_state, C=1.0, solver="lbfgs")
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "train_idx": list(range(n)), "test_idx": [],
+            "n_train": n, "n_test": 0, "classes": classes,
+            "n_classes_in_test": 0, "excluded_classes": excl_cls,
+            "stratification_warnings": strat_warn,
+        }
 
     X_train, X_test = X[train_idx], X[test_idx]
     y_train, y_test = gt_labels[train_idx], gt_labels[test_idx]
 
-    clf = LogisticRegression(
-        max_iter=max_iter, random_state=random_state,
-        C=1.0, solver="lbfgs",
-    )
+    clf = LogisticRegression(max_iter=max_iter, random_state=random_state, C=1.0, solver="lbfgs")
     clf.fit(X_train, y_train)
 
     train_pred = clf.predict(X_train)
     test_pred  = clf.predict(X_test)
-
-    train_acc = float((train_pred == y_train).mean())
-    test_acc  = float((test_pred  == y_test ).mean())
+    train_acc  = float((train_pred == y_train).mean())
+    test_acc   = float((test_pred  == y_test ).mean())
 
     per_class: Dict[int, float] = {}
-    for cls in classes:
+    classes_in_test = sorted(set(int(c) for c in y_test))
+    for cls in classes_in_test:
         mask = y_test == cls
         if mask.any():
             per_class[int(cls)] = round(float((test_pred[mask] == cls).mean()), 4)
 
     return {
-        "clf":            clf,
-        "train_accuracy": round(train_acc, 4),
-        "test_accuracy":  round(test_acc, 4),
-        "per_class_test": per_class,
-        "train_idx":      train_idx.tolist(),
-        "test_idx":       test_idx.tolist(),
-        "n_train":        len(train_idx),
-        "n_test":         len(test_idx),
-        "classes":        classes,
+        "clf":                     clf,
+        "train_accuracy":          round(train_acc, 4),
+        "test_accuracy":           round(test_acc, 4),
+        "per_class_test":          per_class,
+        "train_idx":               train_idx.tolist(),
+        "test_idx":                test_idx.tolist(),
+        "n_train":                 len(train_idx),
+        "n_test":                  len(test_idx),
+        "classes":                 classes,
+        "n_classes_in_test":       len(classes_in_test),
+        "excluded_classes":        excl_cls,
+        "stratification_warnings": strat_warn,
     }
 
 
@@ -466,6 +539,315 @@ def predict_linear(
     clf: Any,
 ) -> np.ndarray:
     """Применяет обученный LogisticRegression к новым данным."""
+    if clf is None or len(X) == 0:
+        return np.zeros(len(X), dtype=int)
+    return clf.predict(X).astype(int)
+
+
+# ---------------------------------------------------------------------------
+# Метод 3: KNN classifier
+# ---------------------------------------------------------------------------
+
+def fit_knn_classifier(
+    X: np.ndarray,
+    gt_labels: np.ndarray,
+    n_neighbors: int = 5,
+    metric: str = "euclidean",
+    test_size: float = 0.5,
+    random_state: int = 42,
+) -> Dict:
+    """
+    KNN на PCA-эмбеддингах. Stratified split 50/50 с обработкой малых классов.
+
+    Args:
+        n_neighbors: k соседей [1,3,5,7,9]
+        metric:      "euclidean" | "cosine"
+
+    Returns dict: clf, train_accuracy, test_accuracy, per_class_test,
+                  n_classes_in_test, excluded_classes, stratification_warnings, ...
+    """
+    from sklearn.neighbors import KNeighborsClassifier
+
+    n = len(X)
+    classes = sorted(set(int(c) for c in gt_labels if c >= 0))
+    k = max(1, min(n_neighbors, n - 1))
+
+    if n < 4 or len(classes) < 2:
+        clf = KNeighborsClassifier(n_neighbors=k, metric=metric)
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "n_train": n, "n_test": 0, "classes": classes,
+            "n_neighbors": k, "metric": metric, "method_type": "knn",
+            "n_classes_in_test": 0, "excluded_classes": [],
+            "stratification_warnings": ["Недостаточно данных (<4 дефектов или <2 классов)"],
+        }
+
+    train_idx, test_idx, excl_cls, strat_warn = _prepare_stratified_split(
+        X, gt_labels, test_size=test_size, random_state=random_state
+    )
+
+    if len(test_idx) == 0:
+        k_safe = max(1, min(k, n - 1))
+        clf = KNeighborsClassifier(n_neighbors=k_safe, metric=metric)
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "n_train": n, "n_test": 0, "classes": classes,
+            "n_neighbors": k_safe, "metric": metric, "method_type": "knn",
+            "n_classes_in_test": 0, "excluded_classes": excl_cls,
+            "stratification_warnings": strat_warn,
+        }
+
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = gt_labels[train_idx], gt_labels[test_idx]
+
+    k_safe = max(1, min(k, len(X_train) - 1))
+    clf = KNeighborsClassifier(n_neighbors=k_safe, metric=metric)
+    clf.fit(X_train, y_train)
+
+    train_pred = clf.predict(X_train)
+    test_pred  = clf.predict(X_test)
+    train_acc  = float((train_pred == y_train).mean())
+    test_acc   = float((test_pred  == y_test ).mean())
+
+    per_class: Dict[int, float] = {}
+    classes_in_test = sorted(set(int(c) for c in y_test))
+    for cls in classes_in_test:
+        mask = y_test == cls
+        if mask.any():
+            per_class[int(cls)] = round(float((test_pred[mask] == cls).mean()), 4)
+
+    return {
+        "clf":                     clf,
+        "train_accuracy":          round(train_acc, 4),
+        "test_accuracy":           round(test_acc,  4),
+        "per_class_test":          per_class,
+        "train_idx":               train_idx.tolist(),
+        "test_idx":                test_idx.tolist(),
+        "n_train":                 len(train_idx),
+        "n_test":                  len(test_idx),
+        "classes":                 classes,
+        "n_neighbors":             k_safe,
+        "metric":                  metric,
+        "method_type":             "knn",
+        "n_classes_in_test":       len(classes_in_test),
+        "excluded_classes":        excl_cls,
+        "stratification_warnings": strat_warn,
+    }
+
+
+def predict_knn(X: np.ndarray, clf: Any) -> np.ndarray:
+    if clf is None or len(X) == 0:
+        return np.zeros(len(X), dtype=int)
+    return clf.predict(X).astype(int)
+
+
+# ---------------------------------------------------------------------------
+# Метод 4: Random Forest
+# ---------------------------------------------------------------------------
+
+def fit_random_forest_classifier(
+    X: np.ndarray,
+    gt_labels: np.ndarray,
+    n_estimators: int = 100,
+    max_depth: Optional[int] = None,
+    test_size: float = 0.5,
+    random_state: int = 42,
+) -> Dict:
+    """
+    RandomForestClassifier на PCA-эмбеддингах. Stratified split с обработкой малых классов.
+    Возвращает feature_importance (какие PCA-компоненты значимы).
+    """
+    from sklearn.ensemble import RandomForestClassifier
+
+    n = len(X)
+    classes = sorted(set(int(c) for c in gt_labels if c >= 0))
+
+    if n < 4 or len(classes) < 2:
+        clf = RandomForestClassifier(
+            n_estimators=n_estimators, max_depth=max_depth,
+            random_state=random_state, n_jobs=-1,
+        )
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "n_train": n, "n_test": 0, "classes": classes,
+            "feature_importance": clf.feature_importances_.tolist(),
+            "n_estimators": n_estimators, "max_depth": max_depth,
+            "method_type": "random_forest",
+            "n_classes_in_test": 0, "excluded_classes": [],
+            "stratification_warnings": ["Недостаточно данных (<4 дефектов или <2 классов)"],
+        }
+
+    train_idx, test_idx, excl_cls, strat_warn = _prepare_stratified_split(
+        X, gt_labels, test_size=test_size, random_state=random_state
+    )
+
+    if len(test_idx) == 0:
+        clf = RandomForestClassifier(
+            n_estimators=n_estimators, max_depth=max_depth,
+            random_state=random_state, n_jobs=-1,
+        )
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "n_train": n, "n_test": 0, "classes": classes,
+            "feature_importance": clf.feature_importances_.tolist(),
+            "n_estimators": n_estimators, "max_depth": max_depth,
+            "method_type": "random_forest",
+            "n_classes_in_test": 0, "excluded_classes": excl_cls,
+            "stratification_warnings": strat_warn,
+        }
+
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = gt_labels[train_idx], gt_labels[test_idx]
+
+    clf = RandomForestClassifier(
+        n_estimators=n_estimators, max_depth=max_depth,
+        random_state=random_state, n_jobs=-1,
+    )
+    clf.fit(X_train, y_train)
+
+    train_pred = clf.predict(X_train)
+    test_pred  = clf.predict(X_test)
+    train_acc  = float((train_pred == y_train).mean())
+    test_acc   = float((test_pred  == y_test ).mean())
+
+    per_class: Dict[int, float] = {}
+    classes_in_test = sorted(set(int(c) for c in y_test))
+    for cls in classes_in_test:
+        mask = y_test == cls
+        if mask.any():
+            per_class[int(cls)] = round(float((test_pred[mask] == cls).mean()), 4)
+
+    return {
+        "clf":                     clf,
+        "train_accuracy":          round(train_acc, 4),
+        "test_accuracy":           round(test_acc,  4),
+        "per_class_test":          per_class,
+        "train_idx":               train_idx.tolist(),
+        "test_idx":                test_idx.tolist(),
+        "n_train":                 len(train_idx),
+        "n_test":                  len(test_idx),
+        "classes":                 classes,
+        "feature_importance":      clf.feature_importances_.tolist(),
+        "n_estimators":            n_estimators,
+        "max_depth":               max_depth,
+        "method_type":             "random_forest",
+        "n_classes_in_test":       len(classes_in_test),
+        "excluded_classes":        excl_cls,
+        "stratification_warnings": strat_warn,
+    }
+
+
+def predict_random_forest(X: np.ndarray, clf: Any) -> np.ndarray:
+    if clf is None or len(X) == 0:
+        return np.zeros(len(X), dtype=int)
+    return clf.predict(X).astype(int)
+
+
+# ---------------------------------------------------------------------------
+# Метод 5: Decision Tree
+# ---------------------------------------------------------------------------
+
+def fit_decision_tree_classifier(
+    X: np.ndarray,
+    gt_labels: np.ndarray,
+    max_depth: Optional[int] = 5,
+    test_size: float = 0.5,
+    random_state: int = 42,
+) -> Dict:
+    """
+    DecisionTreeClassifier — интерпретируемая модель. Stratified split с обработкой малых классов.
+    Возвращает feature_importance и глубину дерева.
+    """
+    from sklearn.tree import DecisionTreeClassifier
+
+    n = len(X)
+    classes = sorted(set(int(c) for c in gt_labels if c >= 0))
+
+    if n < 4 or len(classes) < 2:
+        clf = DecisionTreeClassifier(max_depth=max_depth, random_state=random_state)
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "n_train": n, "n_test": 0, "classes": classes,
+            "feature_importance": clf.feature_importances_.tolist(),
+            "tree_depth": clf.get_depth(), "max_depth": max_depth,
+            "method_type": "decision_tree",
+            "n_classes_in_test": 0, "excluded_classes": [],
+            "stratification_warnings": ["Недостаточно данных (<4 дефектов или <2 классов)"],
+        }
+
+    train_idx, test_idx, excl_cls, strat_warn = _prepare_stratified_split(
+        X, gt_labels, test_size=test_size, random_state=random_state
+    )
+
+    if len(test_idx) == 0:
+        clf = DecisionTreeClassifier(max_depth=max_depth, random_state=random_state)
+        clf.fit(X, gt_labels)
+        pred = clf.predict(X)
+        acc = float((pred == gt_labels).mean())
+        return {
+            "clf": clf, "train_accuracy": round(acc, 4), "test_accuracy": round(acc, 4),
+            "per_class_test": {}, "n_train": n, "n_test": 0, "classes": classes,
+            "feature_importance": clf.feature_importances_.tolist(),
+            "tree_depth": clf.get_depth(), "max_depth": max_depth,
+            "method_type": "decision_tree",
+            "n_classes_in_test": 0, "excluded_classes": excl_cls,
+            "stratification_warnings": strat_warn,
+        }
+
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = gt_labels[train_idx], gt_labels[test_idx]
+
+    clf = DecisionTreeClassifier(max_depth=max_depth, random_state=random_state)
+    clf.fit(X_train, y_train)
+
+    train_pred = clf.predict(X_train)
+    test_pred  = clf.predict(X_test)
+    train_acc  = float((train_pred == y_train).mean())
+    test_acc   = float((test_pred  == y_test ).mean())
+
+    per_class: Dict[int, float] = {}
+    classes_in_test = sorted(set(int(c) for c in y_test))
+    for cls in classes_in_test:
+        mask = y_test == cls
+        if mask.any():
+            per_class[int(cls)] = round(float((test_pred[mask] == cls).mean()), 4)
+
+    return {
+        "clf":                     clf,
+        "train_accuracy":          round(train_acc, 4),
+        "test_accuracy":           round(test_acc,  4),
+        "per_class_test":          per_class,
+        "train_idx":               train_idx.tolist(),
+        "test_idx":                test_idx.tolist(),
+        "n_train":                 len(train_idx),
+        "n_test":                  len(test_idx),
+        "classes":                 classes,
+        "feature_importance":      clf.feature_importances_.tolist(),
+        "tree_depth":              clf.get_depth(),
+        "max_depth":               max_depth,
+        "method_type":             "decision_tree",
+        "n_classes_in_test":       len(classes_in_test),
+        "excluded_classes":        excl_cls,
+        "stratification_warnings": strat_warn,
+    }
+
+
+def predict_decision_tree(X: np.ndarray, clf: Any) -> np.ndarray:
     if clf is None or len(X) == 0:
         return np.zeros(len(X), dtype=int)
     return clf.predict(X).astype(int)
@@ -712,22 +1094,130 @@ def classify_by_embeddings(
                 test_size=float(config.get("test_size", 0.5)),
                 random_state=random_state,
             )
-            # Предсказываем для ВСЕХ дефектов (включая train)
             labels_all = np.full(n_defects_total, -1, dtype=int)
             labels_all[valid_mask] = predict_linear(X_scaled_all[valid_mask], lin["clf"])
             labels_all = np.where(labels_all < 0, 0, labels_all)
             n_clusters = len(lin["classes"])
-            overall_acc = lin["test_accuracy"]  # честная метрика на тестовой части
+            overall_acc = lin["test_accuracy"]
             mapping = {k: k for k in lin["classes"]}
             extra = {
-                "train_accuracy":    lin["train_accuracy"],
-                "test_accuracy":     lin["test_accuracy"],
-                "per_class_accuracy": lin["per_class_test"],
-                "n_train":           lin["n_train"],
-                "n_test":            lin["n_test"],
-                "method_type":       "supervised",
+                "train_accuracy":          lin["train_accuracy"],
+                "test_accuracy":           lin["test_accuracy"],
+                "per_class_accuracy":      lin["per_class_test"],
+                "n_train":                 lin["n_train"],
+                "n_test":                  lin["n_test"],
+                "method_type":             "supervised",
+                "n_classes_in_test":       lin.get("n_classes_in_test", 0),
+                "excluded_classes":        lin.get("excluded_classes", []),
+                "stratification_warnings": lin.get("stratification_warnings", []),
             }
             clusterer = lin["clf"]
+
+    elif method == "knn":
+        # ── KNN classifier ─────────────────────────────────────────────────
+        valid_mask = gt_arr >= 0
+        if not valid_mask.any() or len(set(gt_arr[valid_mask])) < 2:
+            labels_all = np.zeros(n_defects_total, dtype=int)
+            n_clusters = 1
+        else:
+            res = fit_knn_classifier(
+                X_scaled_all[valid_mask], gt_arr[valid_mask],
+                n_neighbors=int(config.get("n_neighbors", 5)),
+                metric=str(config.get("knn_metric", "euclidean")),
+                test_size=float(config.get("test_size", 0.5)),
+                random_state=random_state,
+            )
+            labels_all = np.full(n_defects_total, -1, dtype=int)
+            labels_all[valid_mask] = predict_knn(X_scaled_all[valid_mask], res["clf"])
+            labels_all = np.where(labels_all < 0, 0, labels_all)
+            n_clusters = len(res["classes"])
+            overall_acc = res["test_accuracy"]
+            mapping = {k: k for k in res["classes"]}
+            extra = {
+                "train_accuracy":          res["train_accuracy"],
+                "test_accuracy":           res["test_accuracy"],
+                "per_class_accuracy":      res["per_class_test"],
+                "n_train":                 res["n_train"],
+                "n_test":                  res["n_test"],
+                "n_neighbors":             res["n_neighbors"],
+                "knn_metric":              res["metric"],
+                "method_type":             "knn",
+                "n_classes_in_test":       res.get("n_classes_in_test", 0),
+                "excluded_classes":        res.get("excluded_classes", []),
+                "stratification_warnings": res.get("stratification_warnings", []),
+            }
+            clusterer = res["clf"]
+
+    elif method == "rf":
+        # ── Random Forest ──────────────────────────────────────────────────
+        valid_mask = gt_arr >= 0
+        if not valid_mask.any() or len(set(gt_arr[valid_mask])) < 2:
+            labels_all = np.zeros(n_defects_total, dtype=int)
+            n_clusters = 1
+        else:
+            res = fit_random_forest_classifier(
+                X_scaled_all[valid_mask], gt_arr[valid_mask],
+                n_estimators=int(config.get("n_estimators", 100)),
+                max_depth=config.get("max_depth", None),
+                test_size=float(config.get("test_size", 0.5)),
+                random_state=random_state,
+            )
+            labels_all = np.full(n_defects_total, -1, dtype=int)
+            labels_all[valid_mask] = predict_random_forest(X_scaled_all[valid_mask], res["clf"])
+            labels_all = np.where(labels_all < 0, 0, labels_all)
+            n_clusters = len(res["classes"])
+            overall_acc = res["test_accuracy"]
+            mapping = {k: k for k in res["classes"]}
+            extra = {
+                "train_accuracy":          res["train_accuracy"],
+                "test_accuracy":           res["test_accuracy"],
+                "per_class_accuracy":      res["per_class_test"],
+                "n_train":                 res["n_train"],
+                "n_test":                  res["n_test"],
+                "feature_importance":      res["feature_importance"],
+                "n_estimators":            res["n_estimators"],
+                "max_depth":               res["max_depth"],
+                "method_type":             "random_forest",
+                "n_classes_in_test":       res.get("n_classes_in_test", 0),
+                "excluded_classes":        res.get("excluded_classes", []),
+                "stratification_warnings": res.get("stratification_warnings", []),
+            }
+            clusterer = res["clf"]
+
+    elif method == "dt":
+        # ── Decision Tree ──────────────────────────────────────────────────
+        valid_mask = gt_arr >= 0
+        if not valid_mask.any() or len(set(gt_arr[valid_mask])) < 2:
+            labels_all = np.zeros(n_defects_total, dtype=int)
+            n_clusters = 1
+        else:
+            res = fit_decision_tree_classifier(
+                X_scaled_all[valid_mask], gt_arr[valid_mask],
+                max_depth=config.get("max_depth", 5),
+                test_size=float(config.get("test_size", 0.5)),
+                random_state=random_state,
+            )
+            labels_all = np.full(n_defects_total, -1, dtype=int)
+            labels_all[valid_mask] = predict_decision_tree(X_scaled_all[valid_mask], res["clf"])
+            labels_all = np.where(labels_all < 0, 0, labels_all)
+            n_clusters = len(res["classes"])
+            overall_acc = res["test_accuracy"]
+            mapping = {k: k for k in res["classes"]}
+            extra = {
+                "train_accuracy":          res["train_accuracy"],
+                "test_accuracy":           res["test_accuracy"],
+                "per_class_accuracy":      res["per_class_test"],
+                "n_train":                 res["n_train"],
+                "n_test":                  res["n_test"],
+                "feature_importance":      res["feature_importance"],
+                "tree_depth":              res["tree_depth"],
+                "max_depth":               res["max_depth"],
+                "method_type":             "decision_tree",
+                "n_classes_in_test":       res.get("n_classes_in_test", 0),
+                "excluded_classes":        res.get("excluded_classes", []),
+                "stratification_warnings": res.get("stratification_warnings", []),
+            }
+            clusterer = res["clf"]
 
     else:
         # ── Unsupervised: kmeans / gmm / hierarchical ──────────────────────
@@ -876,8 +1366,28 @@ def classify_single_by_embeddings(
             if valid.any():
                 acc = round(float((labels[valid] == gt_arr_i[valid]).mean()), 4)
     elif method == "linear":
-        # clusterer — это sklearn LogisticRegression
         labels = predict_linear(X, clusterer)
+        acc = None
+        mp = {k: k for k in range(n_clusters)}
+        if gt_label is not None and len(labels) > 0:
+            gt_arr_i = np.full(len(labels), int(gt_label))
+            acc = round(float((labels == gt_arr_i).mean()), 4)
+    elif method == "knn":
+        labels = predict_knn(X, clusterer)
+        acc = None
+        mp = {k: k for k in range(n_clusters)}
+        if gt_label is not None and len(labels) > 0:
+            gt_arr_i = np.full(len(labels), int(gt_label))
+            acc = round(float((labels == gt_arr_i).mean()), 4)
+    elif method == "rf":
+        labels = predict_random_forest(X, clusterer)
+        acc = None
+        mp = {k: k for k in range(n_clusters)}
+        if gt_label is not None and len(labels) > 0:
+            gt_arr_i = np.full(len(labels), int(gt_label))
+            acc = round(float((labels == gt_arr_i).mean()), 4)
+    elif method == "dt":
+        labels = predict_decision_tree(X, clusterer)
         acc = None
         mp = {k: k for k in range(n_clusters)}
         if gt_label is not None and len(labels) > 0:

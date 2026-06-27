@@ -75,6 +75,24 @@ from defect_embedding_classifier import (
     _emb_process_worker,
     UMAP_AVAILABLE,
 )
+from research_grid_search import (
+    run_grid_search as gs_run_grid,
+    run_stability_check as gs_stability,
+    run_stability_extended as gs_stability_ext,
+    get_all_results as gs_get_results,
+    clear_cache as gs_clear_cache,
+    compute_area_stability_correlation as gs_area_corr,
+    precompute_inference as gs_precompute,
+    run_single_experiment as gs_single_exp,
+    run_config_detailed as gs_config_detailed,
+    aggregate_problem_pairs as gs_problem_pairs,
+    diagnose_class_detectability as gs_diagnose_detectability,
+    diagnose_recall_vs_fpr as gs_recall_fpr,
+    run_full_grid_search as gs_run_full_grid,
+    get_full_grid_results as gs_get_full_grid_results,
+    clear_full_grid_cache as gs_clear_full_grid_cache,
+    DEFECT_TYPE_NAMES as GS_DEFECT_NAMES,
+)
 from optimizer.parameter_optimizer import (
     DEFAULT_PARAM_GRID   as BINARIZE_PARAM_GRID,
     find_best_params     as binarize_find_best,
@@ -98,6 +116,18 @@ from metrics_evaluator import (
     _prep_gt,
 )
 from patchcore_runner import PatchCoreRunner
+from calibration import (
+    batch_calibrate           as cal_batch,
+    clear_calib_cache         as cal_clear_cache,
+    get_auto_calib_status     as cal_auto_status,
+    pick_reference_images     as cal_pick_refs,
+    run_auto_calibrate_grid   as cal_auto_grid,
+    CALIB_CLASSES             as CAL_CLASSES,
+    compute_baseline_map      as cal_compute_baseline,
+    save_baseline_map         as cal_save_baseline,
+    load_baseline_map         as cal_load_baseline,
+    BASELINE_PATH             as CAL_BASELINE_PATH,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -119,6 +149,9 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"}
 # ---------------------------------------------------------------------------
 
 runner = PatchCoreRunner(str(MODEL_PATH), device="cuda")
+
+# Version token for the calibration raw-heatmap cache — changes if model is reloaded.
+_CAL_MB_VER: str = str(time.time())
 
 # ---------------------------------------------------------------------------
 # Режимы обработки
@@ -2548,11 +2581,641 @@ def get_classify_methods():
             {"id": "kmeans",       "label": "K-Means",              "description": "Быстрый, хорошо масштабируется, предполагает сферические кластеры"},
             {"id": "gmm",          "label": "GMM (Gaussian Mixture)","description": "Мягкое присвоение, лучше при перекрытии кластеров"},
             {"id": "hierarchical", "label": "Hierarchical (Ward)",   "description": "Без предположения о форме, дендрограмма"},
+            {"id": "prototype",    "label": "Prototype (few-shot)",  "description": "Косинусное сходство с прототипами классов"},
+            {"id": "linear",       "label": "Linear (upper bound)",  "description": "Логистическая регрессия, теоретический потолок"},
+            {"id": "knn",          "label": "KNN",                   "description": "K ближайших соседей в PCA-пространстве"},
+            {"id": "rf",           "label": "Random Forest",         "description": "Ансамбль деревьев, feature importance"},
+            {"id": "dt",           "label": "Decision Tree",         "description": "Интерпретируемое дерево решений"},
         ],
         "feature_names": FEATURE_NAMES,
         "defect_types":  DEFECT_TYPE_NAMES,
         "all_modes":     [{"id": m, "label": MODE_LABELS[m]} for m in ALL_MODES],
     }
+
+
+# ---------------------------------------------------------------------------
+# RESEARCH / JOINT OPTIMIZATION
+# ---------------------------------------------------------------------------
+
+class ResearchGridRequest(BaseModel):
+    subfolder:    str   = Field(default="", description="Поддиректория или '' для всех")
+    max_images:   int   = Field(default=30, ge=1, le=500)
+    thresholds:   List[float] = Field(default=[0.70, 0.80, 0.85, 0.90, 0.92, 0.95])
+    pca_values:   List[int]   = Field(default=[20, 35, 50, 75, 100])
+    methods:      List[str]   = Field(default=["linear", "knn", "rf", "dt", "kmeans"])
+    s_min:        float = Field(default=40.0, ge=0)
+    s_max:        float = Field(default=1500.0, gt=0)
+    k_param:      int   = Field(default=5, ge=1, le=21)
+    n_neighbors:  int   = Field(default=5, ge=1, le=21)
+    knn_metric:   str   = Field(default="euclidean")
+    n_estimators: int   = Field(default=100, ge=10, le=500)
+    max_depth:    Optional[int] = Field(default=None)
+    random_state: int   = Field(default=42)
+    use_cache:    bool  = Field(default=True)
+
+
+class ResearchFullGridRequest(BaseModel):
+    subfolder:    str  = Field(default="")
+    max_images:   int  = Field(default=30, ge=1, le=500)
+    # Detection grid — each list is a sweep axis
+    blur_values:        List[int]   = Field(default=[0, 5, 7])
+    pct_clip_values:    List[float] = Field(default=[90.0, 95.0, 99.0])
+    vmin_values:        List[float] = Field(default=[0.0, 0.10, 0.20])
+    gamma_values:       List[float] = Field(default=[1.0, 2.0, 3.0])
+    bin_thr_values:     List[float] = Field(default=[15.0, 25.0, 40.0])
+    smin_values:        List[int]   = Field(default=[10, 40])
+    smax_values:        List[int]   = Field(default=[200_000, 600_000, 1_000_000])
+    # Detection fixed params
+    use_edge_mask:      bool  = Field(default=True)
+    k_morph:            int   = Field(default=5, ge=1)
+    use_baseline_sub:   bool  = Field(default=False)
+    baseline_alpha:     float = Field(default=1.0, ge=0.0, le=3.0)
+    use_comp_sup:       bool  = Field(default=False)
+    suppression_factor: float = Field(default=0.3, ge=0.05, le=1.0)
+    min_comp_area:      int   = Field(default=0, ge=0)
+    # Classification grid
+    pca_values:   List[int]  = Field(default=[20, 50, 100])
+    methods:      List[str]  = Field(default=["linear", "knn", "rf"])
+    n_neighbors:  int        = Field(default=5, ge=1, le=21)
+    knn_metric:   str        = Field(default="euclidean")
+    n_estimators: int        = Field(default=100, ge=10, le=500)
+    max_depth:    Optional[int] = Field(default=None)
+    random_state: int        = Field(default=42)
+    use_cache:    bool       = Field(default=True)
+    max_combinations: int    = Field(default=1000, ge=10, le=10000)
+
+
+class ResearchStabilityRequest(BaseModel):
+    subfolder:  str        = Field(default="")
+    max_images: int        = Field(default=30, ge=1, le=200)
+    configs:    List[Dict] = Field(...)
+    n_repeats:  int        = Field(default=3, ge=2, le=10)
+
+
+class ResearchSingleRequest(BaseModel):
+    subfolder:    str   = Field(default="")
+    max_images:   int   = Field(default=30, ge=1, le=500)
+    threshold:    float = Field(default=0.85)
+    pca_n:        int   = Field(default=35, ge=2, le=200)
+    method:       str   = Field(default="linear")
+    s_min:        float = Field(default=40.0, ge=0)
+    s_max:        float = Field(default=1500.0, gt=0)
+    k_param:      int   = Field(default=5, ge=1, le=21)
+    n_neighbors:  int   = Field(default=5, ge=1, le=21)
+    knn_metric:   str   = Field(default="euclidean")
+    n_estimators: int   = Field(default=100, ge=10, le=500)
+    max_depth:    Optional[int] = Field(default=None)
+    random_state: int   = Field(default=42)
+
+
+def _collect_images_for_research(subfolder: str, max_images: int) -> List[Path]:
+    """Собирает изображения для research endpoints."""
+    if subfolder:
+        folder = DATA_DIR / subfolder
+        files = sorted(f for f in folder.rglob("*") if f.suffix.lower() in ALLOWED_EXTENSIONS)
+    else:
+        files = sorted(f for f in DATA_DIR.rglob("*") if f.suffix.lower() in ALLOWED_EXTENSIONS)
+    return files[:max_images]
+
+
+@app.post("/research/grid_search")
+async def research_grid_search(req: ResearchGridRequest):
+    """
+    Streaming grid search: Threshold × PCA × Method.
+    Возвращает NDJSON-поток с событиями прогресса и результатами.
+    """
+    async def _generate():
+        try:
+            image_files = _collect_images_for_research(req.subfolder, req.max_images)
+            if not image_files:
+                yield json.dumps({"type": "error", "detail": "Нет изображений"}) + "\n"
+                return
+
+            grid = {
+                "thresholds":   req.thresholds,
+                "pca_values":   req.pca_values,
+                "methods":      req.methods,
+                "s_min":        req.s_min,
+                "s_max":        req.s_max,
+                "k_param":      req.k_param,
+                "n_neighbors":  req.n_neighbors,
+                "knn_metric":   req.knn_metric,
+                "n_estimators": req.n_estimators,
+                "max_depth":    req.max_depth,
+            }
+
+            for event in gs_run_grid(
+                runner, image_files, GT_DIR, grid,
+                use_cache=req.use_cache,
+                random_state=req.random_state,
+            ):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+
+        except Exception as e:
+            logger.exception("research/grid_search error")
+            yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
+
+    return StreamingResponse(_generate(), media_type="application/x-ndjson")
+
+
+@app.get("/research/results")
+def research_results():
+    """Возвращает все кэшированные результаты grid search."""
+    results = gs_get_results()
+    return {"results": results, "n": len(results)}
+
+
+@app.delete("/research/cache")
+def research_clear_cache():
+    """Очищает кэш grid search."""
+    n = gs_clear_cache()
+    return {"deleted": n, "message": f"Удалено {n} записей из кэша"}
+
+
+@app.post("/research/full_grid")
+async def research_full_grid(req: ResearchFullGridRequest):
+    """
+    Streaming full grid search: LC detection pipeline × embedding classification.
+    Перебирает все LC-параметры детекции совместно с PCA/методом классификации.
+    """
+    async def _generate():
+        try:
+            image_files = _collect_images_for_research(req.subfolder, req.max_images)
+            if not image_files:
+                yield json.dumps({"type": "error", "detail": "Нет изображений"}) + "\n"
+                return
+
+            _baseline = cal_load_baseline(CAL_BASELINE_PATH) if req.use_baseline_sub else None
+
+            for event in gs_run_full_grid(
+                runner, image_files, GT_DIR,
+                blur_values=req.blur_values,
+                pct_clip_values=req.pct_clip_values,
+                vmin_values=req.vmin_values,
+                gamma_values=req.gamma_values,
+                bin_thr_values=req.bin_thr_values,
+                smin_values=req.smin_values,
+                smax_values=req.smax_values,
+                use_edge_mask=req.use_edge_mask,
+                k_morph=req.k_morph,
+                baseline_map=_baseline,
+                baseline_alpha=req.baseline_alpha,
+                use_baseline_sub=req.use_baseline_sub,
+                use_comp_sup=req.use_comp_sup,
+                suppression_factor=req.suppression_factor,
+                min_comp_area=req.min_comp_area,
+                pca_values=req.pca_values,
+                methods=req.methods,
+                n_neighbors=req.n_neighbors,
+                knn_metric=req.knn_metric,
+                n_estimators=req.n_estimators,
+                max_depth=req.max_depth,
+                random_state=req.random_state,
+                use_cache=req.use_cache,
+                max_combinations=req.max_combinations,
+            ):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+
+        except Exception as e:
+            logger.exception("research/full_grid error")
+            yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
+
+    return StreamingResponse(_generate(), media_type="application/x-ndjson")
+
+
+@app.get("/research/full_grid/results")
+def research_full_grid_results():
+    """Возвращает все кэшированные результаты full grid search."""
+    results = gs_get_full_grid_results()
+    return {"results": results, "n": len(results)}
+
+
+@app.delete("/research/full_grid/cache")
+def research_full_grid_clear():
+    """Очищает кэш full grid search."""
+    n = gs_clear_full_grid_cache()
+    return {"deleted": n, "message": f"Удалено {n} записей из full grid кэша"}
+
+
+@app.post("/research/stability")
+async def research_stability(req: ResearchStabilityRequest):
+    """Проверяет стабильность топ-N конфигураций (3 повтора)."""
+    image_files = _collect_images_for_research(req.subfolder, req.max_images)
+    if not image_files:
+        raise HTTPException(400, "Нет изображений")
+
+    results = gs_stability(runner, image_files, GT_DIR, req.configs, n_repeats=req.n_repeats)
+    return {"stability": results, "n_configs": len(results)}
+
+
+@app.post("/research/single")
+async def research_single(req: ResearchSingleRequest):
+    """Запускает один эксперимент (одна точка сетки)."""
+    image_files = _collect_images_for_research(req.subfolder, req.max_images)
+    if not image_files:
+        raise HTTPException(400, "Нет изображений")
+
+    precomp = gs_precompute(runner, image_files, GT_DIR)
+    result = gs_single_exp(
+        precomp,
+        threshold=req.threshold,
+        pca_n=req.pca_n,
+        method=req.method,
+        s_min=req.s_min,
+        s_max=req.s_max,
+        k_param=req.k_param,
+        n_neighbors=req.n_neighbors,
+        knn_metric=req.knn_metric,
+        n_estimators=req.n_estimators,
+        max_depth=req.max_depth,
+        random_state=req.random_state,
+        compute_umap=False,
+    )
+    # Удаляем не-JSON объекты если вдруг попали
+    result.pop("fitted_pca", None)
+    result.pop("fitted_scaler", None)
+    result.pop("fitted_clusterer", None)
+    return result
+
+
+@app.post("/research/area_correlation")
+async def research_area_correlation(req: ResearchSingleRequest):
+    """Корреляция площадь дефекта vs точность классификации."""
+    image_files = _collect_images_for_research(req.subfolder, req.max_images)
+    if not image_files:
+        raise HTTPException(400, "Нет изображений")
+
+    result = gs_area_corr(
+        runner, image_files, GT_DIR,
+        threshold=req.threshold,
+        pca_n=req.pca_n,
+        method=req.method,
+        s_min=req.s_min,
+        s_max=req.s_max,
+    )
+    return result
+
+
+@app.post("/research/analyze_config")
+async def research_analyze_config(req: ResearchSingleRequest):
+    """
+    Детальный анализ одной конфигурации:
+    confusion_matrix [5×5], per_class_accuracy, class_distribution, per_class_n_test.
+    """
+    image_files = _collect_images_for_research(req.subfolder, req.max_images)
+    if not image_files:
+        raise HTTPException(400, "Нет изображений")
+
+    precomp = gs_precompute(runner, image_files, GT_DIR)
+    result = gs_config_detailed(
+        precomp,
+        threshold=req.threshold,
+        pca_n=req.pca_n,
+        method=req.method,
+        s_min=req.s_min,
+        s_max=req.s_max,
+        k_param=req.k_param,
+        n_neighbors=req.n_neighbors,
+        knn_metric=req.knn_metric,
+        n_estimators=req.n_estimators,
+        max_depth=req.max_depth,
+        random_state=req.random_state,
+    )
+    return result
+
+
+class ResearchStabilityExtRequest(BaseModel):
+    subfolder:  str        = Field(default="")
+    max_images: int        = Field(default=30, ge=1, le=200)
+    configs:    List[Dict] = Field(...)
+    n_repeats:  int        = Field(default=10, ge=2, le=20)
+
+
+@app.post("/research/stability_10")
+async def research_stability_10(req: ResearchStabilityExtRequest):
+    """
+    Расширенная проверка стабильности: n_repeats запусков, confusion matrix per run.
+    Если std > 10% — помечает результат как нестабильный.
+    """
+    image_files = _collect_images_for_research(req.subfolder, req.max_images)
+    if not image_files:
+        raise HTTPException(400, "Нет изображений")
+
+    results = gs_stability_ext(
+        runner, image_files, GT_DIR,
+        configs=req.configs,
+        n_repeats=req.n_repeats,
+    )
+    return {"stability": results, "n_configs": len(results)}
+
+
+class ResearchProblemPairsRequest(BaseModel):
+    results: List[Dict] = Field(...)
+    top_n:   int        = Field(default=5, ge=1, le=15)
+
+
+@app.post("/research/problem_pairs")
+async def research_problem_pairs(req: ResearchProblemPairsRequest):
+    """
+    Агрегирует confusion matrices из переданных результатов.
+    Возвращает топ-N проблемных пар классов.
+    """
+    pairs = gs_problem_pairs(req.results, top_n=req.top_n)
+    return {
+        "pairs": pairs,
+        "class_names": GS_DEFECT_NAMES,
+        "n_matrices": sum(1 for r in req.results if r.get("confusion_matrix")),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Диагностика детектируемости по типам дефектов
+# ---------------------------------------------------------------------------
+
+class ResearchDetectabilityRequest(BaseModel):
+    subfolder:  str         = Field(default="")
+    max_images: int         = Field(default=200, ge=1, le=500)
+    thresholds: List[float] = Field(
+        default=[0.70, 0.75, 0.80, 0.85, 0.90, 0.92, 0.95]
+    )
+    s_min:  float = Field(default=40.0,   ge=0.0)
+    s_max:  float = Field(default=1500.0, ge=1.0)
+    k_param: int  = Field(default=5,      ge=1, le=15)
+
+
+class ResearchRecallFprRequest(BaseModel):
+    target_class: str        = Field(default="thread")
+    max_images:   int        = Field(default=200, ge=1, le=500)
+    max_good:     int        = Field(default=60,  ge=1, le=200)
+    thresholds:   List[float] = Field(
+        default=[0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+    )
+    s_max_values: List[float] = Field(
+        default=[1_000, 5_000, 10_000, 50_000, 100_000, 300_000, 600_000, 1_000_000]
+    )
+    s_min:   float = Field(default=5.0, ge=0.0)
+    k_param: int   = Field(default=5, ge=1, le=15)
+
+
+@app.post("/research/recall_fpr")
+async def research_recall_fpr(req: ResearchRecallFprRequest):
+    """
+    ROC-like кривая: Recall(target_class) vs FPR(good) по сетке (threshold × S_max).
+
+    Анализирует:
+    - Baseline FPR на папке good/ при текущем S_max=1500
+    - Shape stats (solidity, compactness) дефекта vs good контуров
+    - Sweep S_max: как меняется recall и FPR при увеличении S_max
+    """
+    defect_files = _collect_images_for_research("", req.max_images)
+    if not defect_files:
+        raise HTTPException(400, "Нет изображений с дефектами")
+
+    good_dir   = DATA_DIR / "good"
+    good_files = sorted(
+        p for p in good_dir.iterdir()
+        if p.suffix.lower() in ALLOWED_EXTENSIONS
+    )[:req.max_good] if good_dir.is_dir() else []
+    if not good_files:
+        raise HTTPException(400, "Папка good/ пуста или не найдена")
+
+    result = gs_recall_fpr(
+        runner       = runner,
+        defect_files = defect_files,
+        good_files   = good_files,
+        target_class = req.target_class,
+        thresholds   = req.thresholds,
+        s_max_values = req.s_max_values,
+        s_min        = req.s_min,
+        k_param      = req.k_param,
+    )
+    return result
+
+
+@app.post("/research/detectability")
+async def research_detectability(req: ResearchDetectabilityRequest):
+    """
+    Детектируемость по типам дефектов.
+
+    Для каждого класса и каждого threshold вычисляет:
+    - % изображений с ≥1 обнаружением до S_min фильтра (raw)
+    - % изображений с ≥1 обнаружением после S_min/S_max фильтра (filtered)
+    - Статистики аномальных scores, площадей и аспект-отношений контуров
+
+    Позволяет диагностировать причины нулевой детектируемости:
+    тонкие контуры (area<S_min, perimeter>>S_min) vs низкие аномальные scores.
+    """
+    image_files = _collect_images_for_research(req.subfolder, req.max_images)
+    if not image_files:
+        raise HTTPException(400, "Нет изображений")
+
+    result = gs_diagnose_detectability(
+        runner=runner,
+        image_files=image_files,
+        thresholds=req.thresholds,
+        s_min=req.s_min,
+        s_max=req.s_max,
+        k_param=req.k_param,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Live Heatmap Calibration endpoints
+# ---------------------------------------------------------------------------
+
+class HeatmapCalibrateRequest(BaseModel):
+    vmin_floor:                float = Field(default=0.0,       ge=0.0,  le=0.5)
+    gamma:                     float = Field(default=1.0,       ge=0.5,  le=6.0)
+    binary_threshold:          float = Field(default=20.0,      ge=0.0,  le=100.0)
+    s_min:                     int   = Field(default=40,        ge=0)
+    s_max:                     int   = Field(default=1_500_000, ge=1)
+    use_edge_mask:             bool  = Field(default=True)
+    k_morph:                   int   = Field(default=5,         ge=0,    le=15)
+    blur_kernel:               int   = Field(default=0,         ge=0,    le=15)
+    percentile_clip:           float = Field(default=95.0,      ge=50.0, le=99.9)
+    img_idx:                   int   = Field(default=0,         ge=0,    le=49)
+    # Noise suppression (Stage A + Stage B)
+    use_baseline_subtraction:  bool  = Field(default=False)
+    baseline_alpha:            float = Field(default=1.0,  ge=0.0, le=3.0)
+    use_component_suppression: bool  = Field(default=False)
+    suppression_factor:        float = Field(default=0.3,  ge=0.05, le=1.0)
+    min_component_area:        int   = Field(default=0,    ge=0)
+
+
+class HeatmapAutoCalibRequest(BaseModel):
+    n_calib:                   int         = Field(default=5,  ge=2, le=15)
+    n_good:                    int         = Field(default=10, ge=5, le=30)
+    vmin_values:               List[float] = Field(default=[0.0, 0.05, 0.10, 0.15, 0.20])
+    gamma_values:              List[float] = Field(default=[1.0, 1.5, 2.0, 2.5, 3.0])
+    thr_values:                List[float] = Field(default=[10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0])
+    s_min_values:              List[int]   = Field(default=[5, 20, 40])
+    s_max_values:              List[int]   = Field(default=[50_000, 200_000, 600_000, 1_000_000])
+    blur_values:               List[int]   = Field(default=[0, 5, 7])
+    pct_clip_values:           List[float] = Field(default=[90.0, 95.0, 99.0])
+    use_edge_mask:             bool        = Field(default=True)
+    k_morph:                   int         = Field(default=5, ge=0, le=15)
+    # Phase 2: noise suppression search space
+    baseline_alpha_values:     List[float] = Field(default=[0.5, 1.0, 1.5])
+    suppression_factor_values: List[float] = Field(default=[0.2, 0.3, 0.5])
+    min_comp_multipliers:      List[float] = Field(default=[2.0, 5.0, 10.0])
+
+
+@app.post("/heatmap_calibrate")
+def heatmap_calibrate(req: HeatmapCalibrateRequest):
+    """
+    Run calibrated visualization on 6 reference images (one per class).
+    First call warms inference cache (~300ms/img × 6); subsequent calls are fast (~30ms total).
+    """
+    display_refs, _ = cal_pick_refs(
+        DATA_DIR, n_calib=0, gt_dir=GT_DIR, img_idx=req.img_idx
+    )
+    if not display_refs:
+        raise HTTPException(500, "Не найдены эталонные изображения в DATA_DIR")
+
+    # Load baseline map if it exists (lightweight npy read; None → Stage A disabled)
+    _baseline = cal_load_baseline(CAL_BASELINE_PATH) if req.use_baseline_subtraction else None
+
+    results = cal_batch(
+        runner                    = runner,
+        ref_images                = display_refs,
+        mb_ver                    = _CAL_MB_VER,
+        vmin_floor                = req.vmin_floor,
+        gamma                     = req.gamma,
+        binary_threshold          = req.binary_threshold,
+        s_min                     = req.s_min,
+        s_max                     = req.s_max,
+        use_edge_mask             = req.use_edge_mask,
+        k_morph                   = req.k_morph,
+        blur_kernel               = req.blur_kernel,
+        percentile_clip           = req.percentile_clip,
+        baseline_map              = _baseline,
+        baseline_alpha            = req.baseline_alpha,
+        use_baseline_subtraction  = req.use_baseline_subtraction,
+        use_component_suppression = req.use_component_suppression,
+        suppression_factor        = req.suppression_factor,
+        min_component_area        = req.min_component_area,
+    )
+
+    # Summary
+    fp_classes: List[str] = []
+    missed_classes: List[str] = []
+    correct_count = 0
+    for cls_name, r in results.items():
+        if "error" in r:
+            continue
+        verdict = r.get("verdict", "ok")
+        if cls_name == "good":
+            if verdict == "defect":
+                fp_classes.append(cls_name)
+            else:
+                correct_count += 1
+        else:
+            if verdict == "defect":
+                correct_count += 1
+            else:
+                missed_classes.append(cls_name)
+
+    return {
+        "results":        results,
+        "correct_count":  correct_count,
+        "total_classes":  len(results),
+        "fp_classes":     fp_classes,
+        "missed_classes": missed_classes,
+        "has_fp":         len(fp_classes) > 0,
+    }
+
+
+@app.post("/heatmap_calibrate/baseline")
+def heatmap_build_baseline(n_good: int = 10):
+    """
+    Build pixel-wise noise baseline (p75 of good-image raw heatmaps) and save to disk.
+    Uses inference cache → no extra GPU work if images were already processed.
+    Call this once before enabling use_baseline_subtraction in /heatmap_calibrate.
+    """
+    import numpy as _np
+    _, calib_samples = cal_pick_refs(DATA_DIR, n_calib=max(n_good, 5), gt_dir=None, img_idx=0)
+    good_paths = [s["path"] for s in calib_samples.get("good", [])]
+    if len(good_paths) < 2:
+        raise HTTPException(400, f"Недостаточно good-кадров: {len(good_paths)}, нужно ≥ 2")
+    baseline = cal_compute_baseline(runner, good_paths, _CAL_MB_VER)
+    cal_save_baseline(baseline, CAL_BASELINE_PATH)
+    return {
+        "status":   "ok",
+        "n_images": len(good_paths),
+        "shape":    list(baseline.shape),
+        "min":      round(float(baseline.min()), 5),
+        "max":      round(float(baseline.max()), 5),
+        "mean":     round(float(baseline.mean()), 5),
+        "p75":      round(float(_np.percentile(baseline, 75)), 5),
+        "saved_to": str(CAL_BASELINE_PATH),
+    }
+
+
+@app.post("/heatmap_calibrate/auto")
+def heatmap_auto_calibrate(req: HeatmapAutoCalibRequest):
+    """
+    Start two-phase grid-search auto-calibration in background.
+    Phase 1: 7-parameter base grid (~2520 combos, noise suppression off).
+    Phase 2: noise-suppression grid fixed to Phase 1 best params (~40 combos).
+    Poll /heatmap_calibrate/auto/status for progress and result.
+    """
+    status = cal_auto_status()
+    if status["running"]:
+        return {"status": "already_running", "progress": status["progress"],
+                "total": status["total"]}
+    # Load baseline map for Phase 2 (None → baseline-subtraction options skipped in Phase 2)
+    _baseline = cal_load_baseline(CAL_BASELINE_PATH)
+    cal_auto_grid(
+        runner                    = runner,
+        data_dir                  = DATA_DIR,
+        gt_dir                    = GT_DIR,
+        mb_ver                    = _CAL_MB_VER,
+        n_calib                   = req.n_calib,
+        n_good                    = req.n_good,
+        vmin_values               = req.vmin_values,
+        gamma_values              = req.gamma_values,
+        thr_values                = req.thr_values,
+        s_min_values              = req.s_min_values,
+        s_max_values              = req.s_max_values,
+        blur_values               = req.blur_values,
+        pct_clip_values           = req.pct_clip_values,
+        use_edge_mask             = req.use_edge_mask,
+        k_morph                   = req.k_morph,
+        baseline_map              = _baseline,
+        baseline_alpha_values     = req.baseline_alpha_values,
+        suppression_factor_values = req.suppression_factor_values,
+        min_comp_multipliers      = req.min_comp_multipliers,
+    )
+    return {
+        "status":          "started",
+        "baseline_loaded": _baseline is not None,
+    }
+
+
+@app.get("/heatmap_calibrate/auto/status")
+def heatmap_auto_status():
+    """Poll auto-calibration progress and result."""
+    s = cal_auto_status()
+    return {
+        "running":     s["running"],
+        "progress":    s["progress"],
+        "total":       s["total"],
+        "status":      s["status"],
+        "result":      s["result"],
+        "log":         s["log"],
+        "best_params": s["best_params"],
+        "best_score":  s["best_score"] if s["best_score"] != float("-inf") else None,
+    }
+
+
+@app.delete("/heatmap_calibrate/cache")
+def heatmap_clear_cache():
+    """Clear raw anomaly map cache (useful after reloading model)."""
+    global _CAL_MB_VER
+    _CAL_MB_VER = str(time.time())
+    n = cal_clear_cache()
+    return {"cleared": n, "new_mb_ver": _CAL_MB_VER}
 
 
 # ---------------------------------------------------------------------------

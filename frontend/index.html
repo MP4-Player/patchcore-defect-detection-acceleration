@@ -146,6 +146,8 @@ tbody tr:hover td { background: var(--light); }
   <button class="tab-btn" data-tab="classify">Классификация</button>
   <button class="tab-btn" data-tab="optimize">Оптимизация</button>
   <button class="tab-btn" data-tab="calibrate">Калибровка</button>
+  <button class="tab-btn" data-tab="research">Research ★</button>
+  <button class="tab-btn" data-tab="live_calib">Live Калибровка ★</button>
 </nav>
 
 <!-- ══════════════ TAB 1 — АНАЛИЗ ══════════════ -->
@@ -925,6 +927,679 @@ tbody tr:hover td { background: var(--light); }
 </div>
 </div>
 
+<!-- ══════════════ TAB 5 — RESEARCH ══════════════ -->
+<div class="tab-pane" id="tab-research">
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="card">
+    <div class="card-title">Joint Grid Search</div>
+    <p style="font-size:0.78rem;color:var(--muted);margin-bottom:12px">
+      Совместная оптимизация Threshold × PCA × Метод.
+      Результаты кэшируются — повторный запуск быстрее.
+    </p>
+
+    <label>Папка датасета</label>
+    <select id="rs-folder" style="width:100%;margin-bottom:10px">
+      <option value="">Все категории</option>
+    </select>
+
+    <label>Макс. изображений</label>
+    <input type="number" id="rs-maximg" value="30" min="5" max="200"
+      style="width:100%;margin-bottom:10px">
+
+    <label>Threshold (через запятую)</label>
+    <input type="text" id="rs-thresholds" value="0.70,0.80,0.85,0.90,0.92,0.95"
+      style="width:100%;margin-bottom:10px">
+
+    <label>PCA components (через запятую)</label>
+    <input type="text" id="rs-pcas" value="20,35,50,75,100"
+      style="width:100%;margin-bottom:10px">
+
+    <label>Методы</label>
+    <div style="margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+        <input type="checkbox" class="rs-method" value="linear" checked> Linear (upper bound)
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+        <input type="checkbox" class="rs-method" value="knn" checked> KNN
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+        <input type="checkbox" class="rs-method" value="rf" checked> Random Forest
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+        <input type="checkbox" class="rs-method" value="dt"> Decision Tree
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+        <input type="checkbox" class="rs-method" value="kmeans"> KMeans (baseline)
+      </label>
+    </div>
+
+    <details style="margin-bottom:10px">
+      <summary style="font-size:0.82rem;cursor:pointer;color:var(--muted)">
+        Дополнительные параметры
+      </summary>
+      <div style="padding-top:8px">
+        <label>S_min (пикс.)</label>
+        <input type="number" id="rs-smin" value="40" min="0" style="width:100%;margin-bottom:6px">
+        <label>S_max (пикс.)</label>
+        <input type="number" id="rs-smax" value="1500" min="1" style="width:100%;margin-bottom:6px">
+        <label>KNN k соседей</label>
+        <input type="number" id="rs-knn-k" value="5" min="1" max="21" style="width:100%;margin-bottom:6px">
+        <label>KNN метрика</label>
+        <select id="rs-knn-metric" style="width:100%;margin-bottom:6px">
+          <option value="euclidean">Euclidean</option>
+          <option value="cosine">Cosine</option>
+        </select>
+        <label>RF n_estimators</label>
+        <input type="number" id="rs-rf-ne" value="100" min="10" max="500" style="width:100%;margin-bottom:6px">
+        <label>RF/DT max_depth (0=None)</label>
+        <input type="number" id="rs-max-depth" value="0" min="0" max="20" style="width:100%;margin-bottom:6px">
+      </div>
+    </details>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.82rem;font-weight:400">
+      <input type="checkbox" id="rs-use-cache" checked> Использовать кэш
+    </label>
+
+    <button class="btn btn-primary btn-full" id="rs-run-btn">Запустить Grid Search</button>
+    <button class="btn btn-full" id="rs-clear-cache-btn"
+      style="margin-top:6px;background:var(--border);color:var(--text)">
+      Очистить кэш
+    </button>
+    <div id="rs-status" style="margin-top:10px;font-size:0.8rem;color:var(--muted)"></div>
+
+    <div id="rs-progress-wrap" class="hidden" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--muted);margin-bottom:4px">
+        <span id="rs-progress-label">0 / 0</span>
+        <span id="rs-progress-pct">0%</span>
+      </div>
+      <div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden">
+        <div id="rs-progress-bar" style="height:100%;background:var(--acc);width:0%;transition:width 0.3s"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-title">Стабильность</div>
+    <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">
+      Проверить топ-3 конфигурации на стабильность (3 повтора).
+    </p>
+    <input type="number" id="rs-stab-n" value="3" min="1" max="10"
+      style="width:100%;margin-bottom:8px" placeholder="Число конфиг.">
+    <button class="btn btn-full" id="rs-stab-btn" style="background:var(--acc2,#7c3aed);color:#fff">
+      Проверить стабильность
+    </button>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-title">Диагностика детектируемости</div>
+    <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;line-height:1.5">
+      Проверяет % каждого типа дефектов, доходящих до классификации при разных threshold и S_min.
+      Выявляет причину нулей (низкий score vs тонкие контуры).
+    </p>
+    <button class="btn btn-full" id="rs-detect-btn"
+      style="background:#01579b;color:#fff;margin-bottom:4px">
+      Детектируемость по классам
+    </button>
+    <button class="btn btn-full" id="rs-roc-btn"
+      style="background:#4a148c;color:#fff;margin-top:4px;margin-bottom:4px">
+      Recall vs FPR (good-анализ)
+    </button>
+    <div style="font-size:0.72rem;color:var(--muted);line-height:1.4;margin-top:2px">
+      Целевой класс для ROC:
+      <select id="rs-roc-target" style="width:100%;margin-top:3px;padding:3px">
+        <option value="thread">thread</option>
+        <option value="color">color</option>
+        <option value="cut">cut</option>
+        <option value="hole">hole</option>
+        <option value="metal_contamination">metal_contamination</option>
+      </select>
+    </div>
+    <div id="rs-detect-status" style="font-size:0.75rem;color:var(--muted);min-height:18px;margin-top:4px"></div>
+  </div>
+
+  <!-- Full Grid sidebar card -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-title">Full Grid (LC + Классификация)</div>
+    <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+      Перебирает LC-параметры детекции совместно с PCA/методом.
+      Строит кросс-матрицы для любой пары параметров.
+    </p>
+
+    <details style="margin-bottom:10px">
+      <summary style="font-size:0.82rem;cursor:pointer;color:var(--muted)">Параметры детекции (LC)</summary>
+      <div style="padding-top:8px">
+        <label>Blur (0,5,7)</label>
+        <input type="text" id="rs-fg-blur" value="0,5,7" style="width:100%;margin-bottom:5px">
+        <label>Percentile clip (%)</label>
+        <input type="text" id="rs-fg-pct" value="90,95,99" style="width:100%;margin-bottom:5px">
+        <label>vmin floor</label>
+        <input type="text" id="rs-fg-vmin" value="0.0,0.1,0.2" style="width:100%;margin-bottom:5px">
+        <label>Gamma</label>
+        <input type="text" id="rs-fg-gamma" value="1.0,2.0,3.0" style="width:100%;margin-bottom:5px">
+        <label>Binary threshold (0-100)</label>
+        <input type="text" id="rs-fg-thr" value="15,25,40" style="width:100%;margin-bottom:5px">
+        <label>S_min значения (пикс²)</label>
+        <input type="text" id="rs-fg-smin" value="10,40" style="width:100%;margin-bottom:5px">
+        <label>S_max значения (пикс²)</label>
+        <input type="text" id="rs-fg-smax" value="200000,600000,1000000" style="width:100%;margin-bottom:5px">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:0.82rem">
+          <input type="checkbox" id="rs-fg-edge-mask" checked> Edge mask
+        </label>
+      </div>
+    </details>
+
+    <details style="margin-bottom:10px">
+      <summary style="font-size:0.82rem;cursor:pointer;color:var(--muted)">Параметры классификации</summary>
+      <div style="padding-top:8px">
+        <label>PCA (через запятую)</label>
+        <input type="text" id="rs-fg-pcas" value="20,50,100" style="width:100%;margin-bottom:6px">
+        <label>Методы</label>
+        <div style="margin-bottom:4px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+            <input type="checkbox" class="rs-fg-method" value="linear" checked> Linear
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+            <input type="checkbox" class="rs-fg-method" value="knn" checked> KNN
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:400">
+            <input type="checkbox" class="rs-fg-method" value="rf" checked> RF
+          </label>
+        </div>
+      </div>
+    </details>
+
+    <label>Макс. комбинаций (random sample)</label>
+    <input type="number" id="rs-fg-maxcomb" value="1000" min="10" max="10000"
+      style="width:100%;margin-bottom:10px">
+
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:0.82rem;font-weight:400">
+      <input type="checkbox" id="rs-fg-cache" checked> Использовать кэш
+    </label>
+
+    <button class="btn btn-primary btn-full" id="rs-fg-run-btn">Запустить Full Grid</button>
+    <button class="btn btn-full" id="rs-fg-clear-btn"
+      style="margin-top:6px;background:var(--border);color:var(--text)">
+      Очистить Full Grid кэш
+    </button>
+
+    <div id="rs-fg-status" style="margin-top:10px;font-size:0.8rem;color:var(--muted)"></div>
+    <div id="rs-fg-progress-wrap" class="hidden" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--muted);margin-bottom:4px">
+        <span id="rs-fg-progress-label">0 / 0</span>
+        <span id="rs-fg-progress-pct">0%</span>
+      </div>
+      <div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden">
+        <div id="rs-fg-progress-bar" style="height:100%;background:#7c3aed;width:0%;transition:width 0.3s"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-title">Экспорт</div>
+    <button class="btn btn-full" id="rs-export-btn" style="margin-bottom:6px">
+      Скачать CSV
+    </button>
+    <button class="btn btn-full" id="rs-export-json-btn">
+      Скачать JSON
+    </button>
+  </div>
+</aside>
+
+<main class="main-content">
+  <!-- ── Карточка лучшей конфигурации ── -->
+  <div id="rs-best-card" class="hidden" style="
+    background:linear-gradient(135deg,#e8f5e9,#f3e5f5);
+    border:1.5px solid #81c784;border-radius:10px;
+    padding:14px 18px;margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-weight:600;font-size:0.9rem">★ Лучшая найденная конфигурация</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="rsAnalyzeDetail()" id="rs-detail-btn"
+          style="padding:4px 12px;border-radius:6px;border:1px solid #81c784;
+                 cursor:pointer;font-size:0.78rem;background:#fff;color:#2e7d32">
+          Матрица ошибок
+        </button>
+        <button onclick="rsRunStability10()" id="rs-stab10-btn"
+          style="padding:4px 12px;border-radius:6px;border:1px solid #7c3aed;
+                 cursor:pointer;font-size:0.78rem;background:#fff;color:#7c3aed">
+          Устойчивость (10 запусков)
+        </button>
+      </div>
+    </div>
+    <div id="rs-best-body" style="font-size:0.85rem;line-height:1.7"></div>
+    <div id="rs-stab10-status" style="font-size:0.78rem;color:var(--muted);margin-top:4px"></div>
+  </div>
+
+  <!-- ── Heatmaps Threshold × PCA ── -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Heatmap: Threshold × PCA → Accuracy</div>
+    <div id="rs-method-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+    <div id="rs-heatmap-container" style="overflow-x:auto">
+      <canvas id="rs-heatmap" style="max-width:100%"></canvas>
+    </div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-top:6px">
+      Цвет = accuracy теста. Красный = ошибка/нет дефектов.
+    </div>
+  </div>
+
+  <!-- ── Таблица сравнения методов ── -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Сравнение методов — лучшие параметры</div>
+    <div style="overflow-x:auto">
+      <table id="rs-methods-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">
+        <thead>
+          <tr style="background:var(--border)">
+            <th style="padding:7px 10px;text-align:left">Метод</th>
+            <th style="padding:7px 10px">Best Acc</th>
+            <th style="padding:7px 10px">Train Acc</th>
+            <th style="padding:7px 10px">Классов в тесте</th>
+            <th style="padding:7px 10px">Threshold</th>
+            <th style="padding:7px 10px">PCA</th>
+            <th style="padding:7px 10px">Дефектов</th>
+            <th style="padding:7px 10px">Время, мс</th>
+          </tr>
+        </thead>
+        <tbody id="rs-methods-body">
+          <tr><td colspan="8" style="text-align:center;padding:16px;color:var(--muted)">
+            Запустите grid search
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Предупреждения о стратификации -->
+    <div id="rs-strat-warnings" style="display:none;margin-top:8px;padding:10px 14px;
+         background:#fff3cd;border:1.5px solid #ffc107;font-size:0.8rem;line-height:1.6"></div>
+    </div>
+  </div>
+
+  <!-- ── График: точность по методам (grouped bar) ── -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Точность по методам (лучший threshold для каждого)</div>
+    <div style="height:220px"><canvas id="rs-bar-methods"></canvas></div>
+  </div>
+
+  <!-- ── Heatmap accuracy линейный градиент (все точки) ── -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Accuracy по всем точкам grid search</div>
+    <div style="height:240px"><canvas id="rs-scatter-all"></canvas></div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-top:4px">
+      Ось X = Threshold, Y = PCA, размер = n_defects, цвет = accuracy
+    </div>
+  </div>
+
+  <!-- ── Стабильность (error bars) ── -->
+  <div id="rs-stab-section" class="hidden" style="margin-bottom:18px">
+    <div class="card">
+      <div class="card-title">Стабильность топ-конфигураций (std по 3 запускам)</div>
+      <div style="height:200px"><canvas id="rs-stab-chart"></canvas></div>
+      <table id="rs-stab-table" style="width:100%;border-collapse:collapse;font-size:0.8rem;margin-top:12px">
+        <thead>
+          <tr style="background:var(--border)">
+            <th style="padding:6px 8px;text-align:left">Конфигурация</th>
+            <th style="padding:6px 8px">Mean Acc</th>
+            <th style="padding:6px 8px">Std</th>
+            <th style="padding:6px 8px">Min</th>
+            <th style="padding:6px 8px">Max</th>
+          </tr>
+        </thead>
+        <tbody id="rs-stab-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Feature Importance (RF / DT) ── -->
+  <div id="rs-fi-section" class="hidden" style="margin-bottom:18px">
+    <div class="card">
+      <div class="card-title">Feature Importance (PCA-компоненты)</div>
+      <div style="height:220px"><canvas id="rs-fi-chart"></canvas></div>
+      <div style="font-size:0.75rem;color:var(--muted);margin-top:4px">
+        Показаны топ-20 PCA-компонент по важности. Random Forest / Decision Tree.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Детальный анализ классов (Confusion Matrix) ── -->
+  <div id="rs-detail-section" class="hidden" style="margin-bottom:18px">
+    <div class="card">
+      <div class="card-title">Детальный анализ по классам</div>
+
+      <!-- Табы методов для CM -->
+      <div id="rs-cm-method-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
+
+      <!-- Предупреждение о малой выборке -->
+      <div id="rs-small-sample-warn" class="hidden"
+        style="background:#fff3e0;border:1px solid #ffb300;border-radius:6px;
+               padding:8px 12px;font-size:0.8rem;margin-bottom:12px;color:#e65100">
+        ⚠ Малая выборка: в некоторых классах &lt;5 тест-дефектов — результат может быть нестабилен.
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start">
+
+        <!-- Confusion Matrix -->
+        <div>
+          <div style="font-weight:600;font-size:0.84rem;margin-bottom:8px">
+            Confusion Matrix (строки=GT, столбцы=Pred)
+          </div>
+          <div id="rs-cm-container" style="overflow-x:auto">
+            <table id="rs-cm-table" style="border-collapse:collapse;font-size:0.78rem;min-width:300px">
+              <thead id="rs-cm-head"></thead>
+              <tbody id="rs-cm-body"></tbody>
+            </table>
+          </div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:6px">
+            Диагональ = верно классифицировано (тёмно-зелёный = высокий %)
+          </div>
+        </div>
+
+        <!-- Per-class accuracy bar -->
+        <div>
+          <div style="font-weight:600;font-size:0.84rem;margin-bottom:8px">
+            Accuracy по классам
+          </div>
+          <div style="height:200px"><canvas id="rs-per-class-chart"></canvas></div>
+          <!-- Class distribution -->
+          <div style="font-weight:600;font-size:0.84rem;margin:12px 0 6px">
+            Распределение дефектов (train+test)
+          </div>
+          <div style="height:140px"><canvas id="rs-class-dist-chart"></canvas></div>
+        </div>
+
+      </div>
+
+      <!-- Статус загрузки CM -->
+      <div id="rs-cm-status" style="font-size:0.78rem;color:var(--muted);margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- ── Расширенная стабильность (10 запусков) ── -->
+  <div id="rs-stab10-section" class="hidden" style="margin-bottom:18px">
+    <div class="card">
+      <div class="card-title">Стабильность топ-методов (10 запусков, разные random_state)</div>
+      <div style="height:220px"><canvas id="rs-stab10-chart"></canvas></div>
+      <table id="rs-stab10-table" style="width:100%;border-collapse:collapse;font-size:0.8rem;margin-top:12px">
+        <thead>
+          <tr style="background:var(--border)">
+            <th style="padding:6px 10px;text-align:left">Метод</th>
+            <th style="padding:6px 10px">Threshold</th>
+            <th style="padding:6px 10px">PCA</th>
+            <th style="padding:6px 10px">Mean Acc</th>
+            <th style="padding:6px 10px">Std (10 runs)</th>
+            <th style="padding:6px 10px">Min</th>
+            <th style="padding:6px 10px">Max</th>
+            <th style="padding:6px 10px">Статус</th>
+          </tr>
+        </thead>
+        <tbody id="rs-stab10-body"></tbody>
+      </table>
+      <div style="font-size:0.75rem;color:var(--muted);margin-top:8px">
+        ⚠ Std &gt; 10% → результат нестабилен при разных разбиениях выборки
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Проблемные пары классов ── -->
+  <div id="rs-pairs-section" class="hidden" style="margin-bottom:18px">
+    <div class="card">
+      <div class="card-title">Проблемные пары классов (агрегировано по всем запускам)</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px">
+        Топ-5 пар GT→Predicted с наибольшим числом взаимных ошибок во всех методах.
+        Устойчивый паттерн — не зависит от конкретного split.
+      </p>
+      <table id="rs-pairs-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">
+        <thead>
+          <tr style="background:var(--border)">
+            <th style="padding:7px 10px;text-align:left">GT класс</th>
+            <th style="padding:7px 10px;text-align:left">Предсказано как</th>
+            <th style="padding:7px 10px">Кол-во ошибок</th>
+            <th style="padding:7px 10px">% от GT класса</th>
+            <th style="padding:7px 10px">Визуализация</th>
+          </tr>
+        </thead>
+        <tbody id="rs-pairs-body">
+          <tr><td colspan="5" style="text-align:center;padding:16px;color:var(--muted)">
+            Запустите "Детальный анализ" для нескольких конфигураций
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Детектируемость по типам дефектов ── -->
+  <div id="rs-detect-section" class="hidden" style="margin-bottom:18px">
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Детектируемость по типам дефектов (% изображений с ≥1 детекцией)</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+        Левая часть — до S_min фильтра (raw), правая — после фильтра.
+        Ячейки: зелёный=высокий %, красный=низкий %. Помогает понять на каком этапе теряется тип дефекта.
+      </p>
+      <!-- Матрица class × threshold -->
+      <div style="overflow-x:auto">
+        <canvas id="rs-detect-canvas" style="display:block"></canvas>
+      </div>
+    </div>
+
+    <!-- Аномальные scores по классам -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Max anomaly score по изображениям (до порога)</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">
+        Если max score класса ниже выбранного threshold — контуры не появятся вообще.
+        Вертикальные линии = текущие threshold сетки.
+      </p>
+      <div style="height:200px"><canvas id="rs-detect-scores-chart"></canvas></div>
+      <div id="rs-detect-scores-stats" style="font-size:0.75rem;color:var(--muted);margin-top:8px;line-height:1.7"></div>
+    </div>
+
+    <!-- Площади контуров до S_min фильтра -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Площади контуров до S_min фильтра (минимальный threshold)</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">
+        Если контуры есть (raw>0) но отфильтрованы — причина в S_min.
+        Красная линия = S_min.
+      </p>
+      <div style="height:200px"><canvas id="rs-detect-areas-chart"></canvas></div>
+      <div id="rs-detect-areas-stats" style="font-size:0.75rem;color:var(--muted);margin-top:8px;line-height:1.7"></div>
+    </div>
+
+    <!-- Рекомендации -->
+    <div id="rs-detect-recs" class="hidden" style="padding:12px 16px;
+         background:#fff3cd;border:1.5px solid #ffc107;font-size:0.82rem;line-height:1.8;margin-bottom:10px">
+    </div>
+  </div>
+
+  <!-- ── Recall vs FPR (ROC-like) ── -->
+  <div id="rs-rocfpr-section" class="hidden" style="margin-bottom:18px">
+
+    <!-- Baseline FPR на good при текущем S_max=1500 -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">⚠ Baseline: FPR на good-изображениях (S_max=1500)</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;line-height:1.5">
+        Сколько «чистых» изображений ложно детектируется при текущих параметрах.
+        Это baseline ПЕРЕД любым изменением S_max — менять его нельзя без знания этих цифр.
+      </p>
+      <table id="rs-roc-baseline-table"
+        style="width:100%;border-collapse:collapse;font-size:0.82rem">
+        <thead>
+          <tr style="background:var(--border)">
+            <th style="padding:6px 10px">Threshold</th>
+            <th style="padding:6px 10px">FP изображений good</th>
+            <th style="padding:6px 10px">FPR (%)</th>
+            <th style="padding:6px 10px">Оценка</th>
+          </tr>
+        </thead>
+        <tbody id="rs-roc-baseline-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Shape stats: solidity/compactness сравнение -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">Shape descriptors: дефект vs good контуры</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;line-height:1.5">
+        Если solidity и compactness у good-ложняков и дефектов различаются —
+        можно фильтровать по форме вместо площади.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div class="blk-title">Целевой класс</div>
+          <div id="rs-roc-shape-target" style="font-size:0.78rem;line-height:1.8"></div>
+        </div>
+        <div>
+          <div class="blk-title">Good (ложняки)</div>
+          <div id="rs-roc-shape-good" style="font-size:0.78rem;line-height:1.8"></div>
+        </div>
+      </div>
+      <div id="rs-roc-shape-verdict" style="margin-top:10px;padding:8px 12px;
+           font-size:0.8rem;font-weight:600"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-bottom:4px">Solidity (0=тонкий, 1=компактный)</div>
+          <div style="height:120px"><canvas id="rs-roc-solidity-chart"></canvas></div>
+        </div>
+        <div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-bottom:4px">Compactness (0=тонкий, 1=круглый)</div>
+          <div style="height:120px"><canvas id="rs-roc-compact-chart"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROC scatter -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">ROC: Recall(target) vs FPR(good) по сетке S_max × Threshold</div>
+      <p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;line-height:1.5">
+        Каждая точка = одна комбинация (threshold, S_max). Цвет = threshold, размер ∝ log(S_max).
+        Ищем правый верхний угол с минимальным FPR при максимальном recall.
+      </p>
+      <div style="height:320px"><canvas id="rs-roc-scatter"></canvas></div>
+      <div id="rs-roc-pareto" style="font-size:0.78rem;margin-top:10px;line-height:1.7"></div>
+    </div>
+
+    <!-- Рекомендация -->
+    <div id="rs-roc-recommendation" class="hidden" style="padding:12px 16px;
+         background:#e8f5e9;border:1.5px solid #43a047;font-size:0.82rem;
+         line-height:1.8;margin-bottom:10px"></div>
+  </div>
+
+  <!-- ── Full Grid: Кросс-матрицы ── -->
+  <div id="rs-fg-section" class="hidden card" style="margin-bottom:18px">
+    <div class="card-title">Кросс-матрицы Full Grid</div>
+    <p style="font-size:0.78rem;color:var(--muted);margin-bottom:12px">
+      Выберите два параметра для осей и метрику — ячейки покажут среднее значение по всем остальным параметрам.
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
+      <div>
+        <label style="font-size:0.76rem;color:var(--muted);display:block;margin-bottom:3px">Ось X</label>
+        <select id="rs-fg-xparam" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--light)">
+          <option value="blur_kernel">Blur</option>
+          <option value="percentile_clip">Pct clip</option>
+          <option value="vmin_floor">vmin</option>
+          <option value="gamma">Gamma</option>
+          <option value="binary_threshold" selected>Threshold</option>
+          <option value="s_min">S_min</option>
+          <option value="s_max">S_max</option>
+          <option value="pca_n">PCA n</option>
+          <option value="method">Метод</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:0.76rem;color:var(--muted);display:block;margin-bottom:3px">Ось Y</label>
+        <select id="rs-fg-yparam" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--light)">
+          <option value="blur_kernel">Blur</option>
+          <option value="percentile_clip">Pct clip</option>
+          <option value="vmin_floor">vmin</option>
+          <option value="gamma" selected>Gamma</option>
+          <option value="binary_threshold">Threshold</option>
+          <option value="s_min">S_min</option>
+          <option value="s_max">S_max</option>
+          <option value="pca_n">PCA n</option>
+          <option value="method">Метод</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:0.76rem;color:var(--muted);display:block;margin-bottom:3px">Метрика</label>
+        <select id="rs-fg-metric" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--light)">
+          <option value="clf_accuracy" selected>Точность классификации</option>
+          <option value="detection_recall">Recall детекции</option>
+          <option value="fp_rate">FP rate (↓ лучше)</option>
+          <option value="combined_score">Комбинированный (FP=0 × acc)</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:0.76rem;color:var(--muted);display:block;margin-bottom:3px">Фильтр</label>
+        <label style="display:flex;align-items:center;gap:5px;padding-top:4px">
+          <input type="checkbox" id="rs-fg-feasible-only" checked>
+          <span style="font-size:0.78rem">Только FP=0</span>
+        </label>
+      </div>
+      <button class="btn btn-primary" id="rs-fg-matrix-btn">Построить матрицу</button>
+    </div>
+    <div id="rs-fg-matrix-container"></div>
+
+    <div id="rs-fg-best-wrap" class="hidden" style="margin-top:20px">
+      <div style="font-weight:600;font-size:0.88rem;margin-bottom:8px">Топ-10 конфигураций Full Grid</div>
+      <div style="overflow-x:auto">
+        <table id="rs-fg-best-table" style="width:100%;border-collapse:collapse;font-size:0.77rem"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Теоретический обзор ── -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Теоретический обзор: интеграция параметров</div>
+    <div style="font-size:0.82rem;line-height:1.75;color:var(--text)">
+
+      <p><strong>1. Threshold/S_min/S_max и качество признаков для классификации</strong><br>
+      Порог бинаризации определяет не только количество, но и <em>информативность</em> детектируемых дефектов.
+      При низком threshold (0.5–0.7) в выборку попадают шумовые регионы с малым числом патчей —
+      их усреднённый эмбеддинг нестабилен и плохо разделим. При высоком threshold (0.90+) дефектов мало,
+      но каждый покрыт достаточным числом патчей в аномальной зоне backbone, что даёт более чистые
+      дефект-векторы. S_min отсекает шум по площади: регионы &lt; 40 пикс. часто содержат 0–1 патч
+      в 28×28 сетке, их эмбеддинг — фактически случайный вектор. Оптимальный threshold = 0.85–0.92
+      по нашим экспериментам — баланс количество/качество.
+      <br><em>Источники: Roth et al. (2022) «Towards Total Recall in Industrial Anomaly Detection», CVPR;
+      defect embedding locality analysis в патч-основанных методах.</em></p>
+
+      <p><strong>2. PCA на нейросетевых эмбеддингах — выбор n_components</strong><br>
+      Эмбеддинги ResNet50 (1536-dim) сильно коррелированы: первые 20–50 компонент объясняют
+      85–95% дисперсии. Практическое правило: n ≥ max(10, N_samples / 10), но не более sqrt(N_samples).
+      При N=100–300 дефектов оптимум PCA=20–50. Слишком малое PCA теряет дискриминативную информацию,
+      слишком большое вносит шум (curse of dimensionality для KNN).
+      Для KNN cosine-метрика менее чувствительна к размерности, чем euclidean.
+      <br><em>Источники: Raudys &amp; Jain (1991) «Small sample size effects in statistical pattern recognition»;
+      практические рекомендации scikit-learn для PCA before KNN.</em></p>
+
+      <p><strong>3. Совместная оптимизация — почему нельзя по отдельности</strong><br>
+      Threshold влияет на N_defects → PCA ограничен max(2, N-1) → метод зависит от N и разделимости.
+      Оптимальный PCA для Linear при threshold=0.70 (354 дефекта) ≠ оптимальный при threshold=0.92 (ок. 120).
+      KNN с k=5 при N=50 работает иначе чем при N=300. Grid search в этом пространстве показывает,
+      что 2D-оптимум лежит не на осях, а внутри — совместная комбинация лучше любой маргинальной.
+      <br><em>Источники: Bergstra &amp; Bengio (2012) «Random Search for Hyper-Parameter Optimization», JMLR;
+      Yang &amp; Shami (2020) «On Hyperparameter Optimization of Machine Learning Algorithms».</em></p>
+
+      <p><strong>4. KNN в PCA-пространстве — k и метрика vs размерность</strong><br>
+      В высокоразмерных пространствах euclidean-расстояния концентрируются (все точки «равноудалены»).
+      PCA до 20–50 существенно снижает этот эффект. Cosine-метрика инвариантна к масштабу и лучше
+      работает с L2-нормализованными эмбеддингами (наш backbone нормализует фичи).
+      Оптимальное k = sqrt(N_train): при N_train≈150 → k=12. Нечётное k избегает ничьих.
+      Кросс-валидация по k в диапазоне [1,3,5,7,9] достаточна при малых выборках.
+      <br><em>Источники: Fix &amp; Hodges (1951) оригинальный KNN; Aggarwal et al. (2001)
+      «On the Surprising Behavior of Distance Metrics in High Dimensional Space».</em></p>
+
+      <p><strong>5. Random Forest и Decision Tree — устойчивость к малым выборкам</strong><br>
+      RF устойчив к малым выборкам за счёт bootstrap-агрегации (bagging): каждое дерево видит
+      ~63% данных. Feature importance RF = снижение Gini-impurity — позволяет увидеть,
+      какие PCA-компоненты несут дискриминативную информацию. DT интерпретируем (можно
+      извлечь правила), но переобучается при малых выборках без ограничения max_depth.
+      max_depth=5 достаточно при N&lt;300 для 5 классов.
+      <br><em>Источники: Breiman (2001) «Random Forests», Machine Learning;
+      Geurts et al. (2006) «Extremely randomized trees».</em></p>
+    </div>
+  </div>
+
+</main>
+</div>
+</div>
+
 <!-- ══════════════ TAB 4 — КАЛИБРОВКА ══════════════ -->
 <div class="tab-pane" id="tab-calibrate">
 <div style="padding:18px 20px;max-width:700px">
@@ -1077,6 +1752,8 @@ async function init() {
 
   await Promise.all([loadImages(), loadSubfolders(), loadHistory(), loadBinarizeParams()]);
   bindEvents();
+  _bindResearchEvents();
+  rsLoadCachedResults();
 }
 
 async function loadImages() {
@@ -1092,7 +1769,7 @@ async function loadSubfolders() {
     const d = await fetch(`${API}/subfolders`).then(r => r.json());
     const opts = '<option value="">Все изображения</option>' +
       d.subfolders.map(s => `<option value="${s}">${s}</option>`).join('');
-    ['c-folder','d-folder','oa-folder','ob-folder','cl-folder','od-folder'].forEach(id => {
+    ['c-folder','d-folder','oa-folder','ob-folder','cl-folder','od-folder','rs-folder'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = opts;
     });
@@ -3164,7 +3841,2870 @@ async function runOptimizeClassify() {
   btn.disabled = false;
 }
 
+// ════════════════════════ TAB: RESEARCH ════════════════════════════════════
+
+// --- Состояние Research ---
+let _rsResults = [];        // Все результаты grid search
+let _rsHeatmapMethod = '';  // Выбранный метод для heatmap
+let _rsFgResults = [];      // Результаты full grid search
+
+// Цвета методов
+const RS_COLORS = {
+  linear: '#1565c0', knn: '#2e7d32', rf: '#f57f17',
+  dt: '#6a1b9a', kmeans: '#c62828', gmm: '#00695c', hierarchical: '#4e342e',
+};
+const RS_LABELS = {
+  linear: 'Linear', knn: 'KNN', rf: 'Random Forest',
+  dt: 'Decision Tree', kmeans: 'KMeans', gmm: 'GMM', hierarchical: 'Hierarchical',
+};
+
+function _rsParseList(str, parser) {
+  return str.split(',').map(s => parser(s.trim())).filter(v => !isNaN(v) && v > 0);
+}
+
+async function rsRunGridSearch() {
+  const btn = document.getElementById('rs-run-btn');
+  const status = document.getElementById('rs-status');
+  btn.disabled = true;
+  _rsResults = [];
+
+  const thresholds = _rsParseList(document.getElementById('rs-thresholds').value, parseFloat);
+  const pcas       = _rsParseList(document.getElementById('rs-pcas').value, parseInt);
+  const methods    = [...document.querySelectorAll('.rs-method:checked')].map(el => el.value);
+  const maxImg     = parseInt(document.getElementById('rs-maximg').value) || 30;
+  const folder     = document.getElementById('rs-folder').value || '';
+  const useCache   = document.getElementById('rs-use-cache').checked;
+  const smin       = parseFloat(document.getElementById('rs-smin').value) || 40;
+  const smax       = parseFloat(document.getElementById('rs-smax').value) || 1500;
+  const knnK       = parseInt(document.getElementById('rs-knn-k').value) || 5;
+  const knnMetric  = document.getElementById('rs-knn-metric').value;
+  const rfNe       = parseInt(document.getElementById('rs-rf-ne').value) || 100;
+  const maxDepthRaw = parseInt(document.getElementById('rs-max-depth').value);
+  const maxDepth   = (!maxDepthRaw || maxDepthRaw <= 0) ? null : maxDepthRaw;
+
+  if (!thresholds.length || !pcas.length || !methods.length) {
+    status.textContent = 'Заполните все параметры';
+    btn.disabled = false;
+    return;
+  }
+
+  const total = thresholds.length * pcas.length * methods.length;
+  document.getElementById('rs-progress-wrap').classList.remove('hidden');
+  document.getElementById('rs-progress-label').textContent = `0 / ${total}`;
+  document.getElementById('rs-progress-pct').textContent = '0%';
+  document.getElementById('rs-progress-bar').style.width = '0%';
+  status.textContent = 'Запуск...';
+
+  try {
+    const body = {
+      subfolder: folder, max_images: maxImg,
+      thresholds, pca_values: pcas, methods,
+      s_min: smin, s_max: smax, k_param: 5,
+      n_neighbors: knnK, knn_metric: knnMetric,
+      n_estimators: rfNe, max_depth: maxDepth,
+      use_cache: useCache,
+    };
+    const res = await fetch(`${API}/research/grid_search`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === 'result' && ev.result) {
+            _rsResults.push(ev.result);
+            const pct = Math.round((ev.done / ev.total) * 100);
+            document.getElementById('rs-progress-label').textContent = `${ev.done} / ${ev.total}`;
+            document.getElementById('rs-progress-pct').textContent = pct + '%';
+            document.getElementById('rs-progress-bar').style.width = pct + '%';
+            status.textContent = `[${ev.cached ? 'кэш' : 'вычислено'}] thr=${ev.result.threshold} pca=${ev.result.pca_components} ${ev.result.method} → ${ev.result.accuracy != null ? (ev.result.accuracy * 100).toFixed(1) + '%' : 'нет дефектов'}`;
+          } else if (ev.type === 'error') {
+            status.textContent = 'Ошибка: ' + ev.detail;
+          } else if (ev.type === 'done') {
+            status.textContent = `Готово! ${ev.done} / ${ev.total} точек`;
+          } else if (ev.type === 'progress') {
+            status.textContent = ev.message;
+          }
+        } catch {}
+      }
+    }
+
+    rsRenderAll();
+  } catch (e) {
+    status.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function rsRenderAll() {
+  if (!_rsResults.length) return;
+  rsRenderMethodsTable();
+  rsRenderBestCard();
+  rsRenderMethodTabs();
+  rsRenderHeatmap(_rsHeatmapMethod || _rsResults[0]?.method || '');
+  rsRenderScatterAll();
+  rsRenderBarMethods();
+  rsCheckFeatureImportance();
+  rsRenderCmMethodTabs();
+}
+
+function rsRenderBestCard() {
+  const valid = _rsResults.filter(r => r.accuracy != null);
+  if (!valid.length) return;
+  const best = valid.reduce((a, b) => (b.accuracy > a.accuracy ? b : a));
+  const card = document.getElementById('rs-best-card');
+  const body = document.getElementById('rs-best-body');
+
+  const nct = best.n_classes_in_test;
+  const isSupervised = ['linear','knn','rf','dt'].includes(best.method);
+  const nctNote = (isSupervised && nct != null && nct < 5)
+    ? `&nbsp;| ⚠ <span style="color:#e65100;font-weight:600">Классов в тесте: ${nct}/5</span>` : '';
+  const missingNote = (best.missing_classes || []).length > 0
+    ? `<br>⚠ <span style="color:#b71c1c">Отсутствующие классы: ${best.missing_classes.join(', ')}</span>` : '';
+  const sparseNote = (best.sparse_classes || []).length > 0
+    ? `<br>⚠ <span style="color:#e65100">Малые классы (&lt;5 дефектов): ${best.sparse_classes.join(', ')}</span>` : '';
+
+  body.innerHTML = `
+    <b>Метод:</b> ${RS_LABELS[best.method] || best.method} &nbsp;|&nbsp;
+    <b>Accuracy:</b> <span style="color:#2e7d32;font-weight:700">${(best.accuracy*100).toFixed(1)}%</span> &nbsp;|&nbsp;
+    <b>Train:</b> ${best.train_accuracy != null ? (best.train_accuracy*100).toFixed(1)+'%' : '—'}<br>
+    <b>Threshold:</b> ${best.threshold} &nbsp;|&nbsp;
+    <b>PCA:</b> ${best.pca_components} &nbsp;|&nbsp;
+    <b>Дефектов:</b> ${best.n_defects}${nctNote}
+    ${best.n_neighbors ? `&nbsp;| <b>k:</b> ${best.n_neighbors} (${best.knn_metric})` : ''}
+    ${best.n_estimators ? `&nbsp;| <b>n_est:</b> ${best.n_estimators}` : ''}
+    ${best.max_depth   ? `&nbsp;| <b>max_depth:</b> ${best.max_depth}` : ''}
+    ${missingNote}${sparseNote}
+  `;
+  card.classList.remove('hidden');
+}
+
+function rsRenderMethodsTable() {
+  // Лучший результат по каждому методу
+  const byMethod = {};
+  for (const r of _rsResults) {
+    if (r.accuracy == null) continue;
+    const m = r.method;
+    if (!byMethod[m] || r.accuracy > byMethod[m].accuracy) byMethod[m] = r;
+  }
+  const tbody = document.getElementById('rs-methods-body');
+  const methods = Object.keys(byMethod).sort((a,b) => byMethod[b].accuracy - byMethod[a].accuracy);
+  if (!methods.length) { tbody.innerHTML = '<tr><td colspan="8">Нет данных</td></tr>'; return; }
+
+  // Собираем все предупреждения о стратификации
+  const allWarnings = [];
+  const allMissing  = new Set();
+  const allSparse   = new Set();
+
+  tbody.innerHTML = methods.map((m, i) => {
+    const r = byMethod[m];
+    const rank = i === 0 ? '★' : '';
+    const bg = i === 0 ? 'background:#e8f5e9' : '';
+
+    // Колонка "Классов в тесте"
+    const nct = r.n_classes_in_test;
+    const isSupervised = ['linear','knn','rf','dt'].includes(m);
+    let nctCell = '—';
+    if (isSupervised && nct != null) {
+      const color = nct >= 5 ? '#2e7d32' : nct >= 3 ? '#e65100' : '#b71c1c';
+      const tip = nct < 5 ? ` title="Только ${nct} из 5 классов в тесте — accuracy завышена!"` : '';
+      nctCell = `<span style="font-weight:600;color:${color}"${tip}>${nct}/5</span>`;
+      if (nct < 5) {
+        (r.stratification_warnings || []).forEach(w => allWarnings.push(`[${RS_LABELS[m]||m}] ${w}`));
+      }
+    }
+    (r.missing_classes || []).forEach(c => allMissing.add(c));
+    (r.sparse_classes  || []).forEach(c => allSparse.add(c));
+
+    return `<tr style="${bg}">
+      <td style="padding:6px 10px;font-weight:${i===0?'600':'400'}">${rank} ${RS_LABELS[m]||m}</td>
+      <td style="padding:6px 10px;text-align:center;font-weight:600;color:${RS_COLORS[m]||'#333'}">
+        ${(r.accuracy*100).toFixed(1)}%</td>
+      <td style="padding:6px 10px;text-align:center">
+        ${r.train_accuracy != null ? (r.train_accuracy*100).toFixed(1)+'%' : '—'}</td>
+      <td style="padding:6px 10px;text-align:center">${nctCell}</td>
+      <td style="padding:6px 10px;text-align:center">${r.threshold}</td>
+      <td style="padding:6px 10px;text-align:center">${r.pca_components}</td>
+      <td style="padding:6px 10px;text-align:center">${r.n_defects}</td>
+      <td style="padding:6px 10px;text-align:center">${r.time_ms?.toFixed(0) || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // Блок предупреждений
+  const warnDiv = document.getElementById('rs-strat-warnings');
+  const lines = [];
+  if (allMissing.size > 0)
+    lines.push(`⚠ <b>Отсутствующие классы при данном threshold:</b> ${[...allMissing].join(', ')} — эти классы вообще не попали в датасет`);
+  if (allSparse.size > 0)
+    lines.push(`⚠ <b>Малые классы (&lt;5 дефектов):</b> ${[...allSparse].join(', ')} — accuracy для них статистически ненадёжна`);
+  allWarnings.forEach(w => lines.push(`• ${w}`));
+
+  if (lines.length > 0) {
+    warnDiv.innerHTML = lines.join('<br>');
+    warnDiv.style.display = 'block';
+  } else {
+    warnDiv.style.display = 'none';
+  }
+}
+
+function rsRenderMethodTabs() {
+  const methods = [...new Set(_rsResults.map(r => r.method))];
+  const container = document.getElementById('rs-method-tabs');
+  container.innerHTML = methods.map(m => `
+    <button onclick="rsSelectHeatmapMethod('${m}')" id="rs-ht-${m}"
+      style="padding:5px 12px;border-radius:6px;border:1.5px solid ${RS_COLORS[m]||'#ccc'};
+             cursor:pointer;font-size:0.8rem;background:${_rsHeatmapMethod===m ? RS_COLORS[m]||'#333' : 'var(--bg)'};
+             color:${_rsHeatmapMethod===m ? '#fff' : 'var(--text)'}">
+      ${RS_LABELS[m]||m}
+    </button>`).join('');
+  if (!_rsHeatmapMethod && methods.length) {
+    _rsHeatmapMethod = methods[0];
+    rsSelectHeatmapMethod(methods[0]);
+  }
+}
+
+function rsSelectHeatmapMethod(method) {
+  _rsHeatmapMethod = method;
+  document.querySelectorAll('[id^="rs-ht-"]').forEach(btn => {
+    const m = btn.id.replace('rs-ht-', '');
+    btn.style.background = m === method ? (RS_COLORS[m]||'#333') : 'var(--bg)';
+    btn.style.color = m === method ? '#fff' : 'var(--text)';
+  });
+  rsRenderHeatmap(method);
+  rsCheckFeatureImportance();
+}
+
+function rsRenderHeatmap(method) {
+  const data = _rsResults.filter(r => r.method === method && r.accuracy != null);
+  if (!data.length) return;
+
+  const thresholds = [...new Set(data.map(r => r.threshold))].sort((a,b) => a-b);
+  const pcas       = [...new Set(data.map(r => r.pca_components))].sort((a,b) => a-b);
+
+  // Рисуем кастомный heatmap на canvas
+  const canvas = document.getElementById('rs-heatmap');
+  const cellW = Math.max(60, Math.min(90, (canvas.parentElement.clientWidth - 80) / thresholds.length));
+  const cellH = 36;
+  const padL = 55, padT = 40, padB = 30;
+  canvas.width  = padL + thresholds.length * cellW + 10;
+  canvas.height = padT + pcas.length * cellH + padB;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Заголовок
+  ctx.fillStyle = '#333';
+  ctx.font = '12px Manrope, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`Heatmap: ${RS_LABELS[method]||method}`, canvas.width/2, 16);
+
+  // Ось X (threshold)
+  thresholds.forEach((t, ti) => {
+    ctx.fillStyle = '#666';
+    ctx.font = '11px Manrope';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.toFixed(2), padL + ti * cellW + cellW/2, padT - 8);
+  });
+
+  // Ось Y (pca)
+  pcas.forEach((p, pi) => {
+    ctx.fillStyle = '#666';
+    ctx.font = '11px Manrope';
+    ctx.textAlign = 'right';
+    ctx.fillText(p, padL - 6, padT + pi * cellH + cellH/2 + 4);
+  });
+
+  // Ячейки
+  pcas.forEach((p, pi) => {
+    thresholds.forEach((t, ti) => {
+      const row = data.find(r => Math.abs(r.threshold - t) < 0.0001 && r.pca_components === p);
+      const acc = row?.accuracy;
+      let bg = '#f5f5f5';
+      let textColor = '#aaa';
+      if (acc != null) {
+        // Зелёный градиент от 0→1
+        const v = Math.max(0, Math.min(1, acc));
+        const r = Math.round(255 - v * 180);
+        const g = Math.round(120 + v * 135);
+        const b = Math.round(80 + v * 30);
+        bg = `rgb(${r},${g},${b})`;
+        textColor = v > 0.5 ? '#fff' : '#333';
+      } else if (row?.error === 'no_defects') {
+        bg = '#ffcdd2';
+        textColor = '#b71c1c';
+      }
+      const x = padL + ti * cellW;
+      const y = padT + pi * cellH;
+      ctx.fillStyle = bg;
+      ctx.fillRect(x, y, cellW - 2, cellH - 2);
+      ctx.fillStyle = textColor;
+      ctx.font = 'bold 12px Manrope';
+      ctx.textAlign = 'center';
+      ctx.fillText(acc != null ? (acc*100).toFixed(1)+'%' : '—', x + cellW/2, y + cellH/2 + 4);
+    });
+  });
+
+  // Метка осей
+  ctx.save();
+  ctx.fillStyle = '#555';
+  ctx.font = '11px Manrope';
+  ctx.textAlign = 'center';
+  ctx.fillText('Threshold →', padL + (thresholds.length * cellW) / 2, canvas.height - 8);
+  ctx.restore();
+}
+
+function rsRenderBarMethods() {
+  const byMethod = {};
+  for (const r of _rsResults) {
+    if (r.accuracy == null) continue;
+    const m = r.method;
+    if (!byMethod[m] || r.accuracy > byMethod[m].accuracy) byMethod[m] = r;
+  }
+  const methods = Object.keys(byMethod);
+  if (!methods.length) return;
+
+  if (charts['rs-bar-methods']) charts['rs-bar-methods'].destroy();
+  const el = document.getElementById('rs-bar-methods');
+  if (!el) return;
+  charts['rs-bar-methods'] = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: methods.map(m => RS_LABELS[m]||m),
+      datasets: [{
+        label: 'Test Accuracy',
+        data: methods.map(m => byMethod[m].accuracy * 100),
+        backgroundColor: methods.map(m => RS_COLORS[m]||'#888'),
+      }, {
+        label: 'Train Accuracy',
+        data: methods.map(m => (byMethod[m].train_accuracy||0) * 100),
+        backgroundColor: methods.map(m => (RS_COLORS[m]||'#888') + '60'),
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color:'#333', font:FONT, boxWidth:10 } } },
+      scales: {
+        x: { ticks:{color:TICK,font:FONT}, grid:{color:GRID} },
+        y: { ticks:{color:TICK,font:FONT}, grid:{color:GRID}, beginAtZero:true, max:100,
+             title:{display:true,text:'Accuracy (%)',color:TICK,font:FONT} },
+      }
+    }
+  });
+}
+
+function rsRenderScatterAll() {
+  const valid = _rsResults.filter(r => r.accuracy != null);
+  if (!valid.length) return;
+
+  const methods = [...new Set(valid.map(r => r.method))];
+  const datasets = methods.map(m => ({
+    label: RS_LABELS[m]||m,
+    data: valid.filter(r => r.method === m).map(r => ({
+      x: r.threshold,
+      y: r.pca_components,
+      r: Math.max(4, Math.min(14, (r.n_defects||10) / 15)),
+    })),
+    backgroundColor: (RS_COLORS[m]||'#888') + 'aa',
+    borderColor: RS_COLORS[m]||'#888',
+  }));
+
+  if (charts['rs-scatter-all']) charts['rs-scatter-all'].destroy();
+  const el = document.getElementById('rs-scatter-all');
+  if (!el) return;
+  charts['rs-scatter-all'] = new Chart(el, {
+    type: 'bubble',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color:'#333', font:FONT, boxWidth:10 } } },
+      scales: {
+        x: { ticks:{color:TICK,font:FONT}, grid:{color:GRID},
+             title:{display:true,text:'Threshold',color:TICK,font:FONT} },
+        y: { ticks:{color:TICK,font:FONT}, grid:{color:GRID},
+             title:{display:true,text:'PCA components',color:TICK,font:FONT} },
+      }
+    }
+  });
+}
+
+function rsCheckFeatureImportance() {
+  const method = _rsHeatmapMethod;
+  if (!['rf','dt'].includes(method)) {
+    document.getElementById('rs-fi-section').classList.add('hidden');
+    return;
+  }
+  const best = _rsResults.filter(r => r.method === method && r.accuracy != null && r.feature_importance)
+    .sort((a,b) => b.accuracy - a.accuracy)[0];
+  if (!best) { document.getElementById('rs-fi-section').classList.add('hidden'); return; }
+
+  document.getElementById('rs-fi-section').classList.remove('hidden');
+  const fi = best.feature_importance;
+  const top20 = fi.map((v,i) => ({v,i})).sort((a,b) => b.v - a.v).slice(0, 20);
+
+  if (charts['rs-fi-chart']) charts['rs-fi-chart'].destroy();
+  const el = document.getElementById('rs-fi-chart');
+  if (!el) return;
+  charts['rs-fi-chart'] = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: top20.map(({i}) => `PCA ${i}`),
+      datasets: [{ label: 'Feature Importance', data: top20.map(({v}) => v),
+        backgroundColor: RS_COLORS[method]||'#888' }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      indexAxis: 'y',
+      plugins: { legend: { display:false } },
+      scales: {
+        x: { ticks:{color:TICK,font:FONT}, grid:{color:GRID} },
+        y: { ticks:{color:TICK,font:FONT,font:{size:10}}, grid:{color:GRID} },
+      }
+    }
+  });
+}
+
+async function rsCheckStability() {
+  const valid = _rsResults.filter(r => r.accuracy != null);
+  if (!valid.length) { alert('Сначала запустите grid search'); return; }
+
+  const n = parseInt(document.getElementById('rs-stab-n').value) || 3;
+  const sorted = [...valid].sort((a,b) => b.accuracy - a.accuracy);
+  const topN = sorted.slice(0, n);
+
+  const btn = document.getElementById('rs-stab-btn');
+  btn.disabled = true;
+  btn.textContent = 'Проверяю...';
+
+  try {
+    const folder = document.getElementById('rs-folder').value || '';
+    const maxImg = parseInt(document.getElementById('rs-maximg').value) || 30;
+
+    const res = await fetch(`${API}/research/stability`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ subfolder: folder, max_images: maxImg, configs: topN, n_repeats: 3 }),
+    });
+    const data = await res.json();
+    rsRenderStability(data.stability);
+  } catch (e) {
+    alert('Ошибка стабильности: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Проверить стабильность';
+  }
+}
+
+function rsRenderStability(results) {
+  document.getElementById('rs-stab-section').classList.remove('hidden');
+
+  const labels = results.map((r, i) =>
+    `${RS_LABELS[r.config?.method]||r.config?.method} thr=${r.config?.threshold} pca=${r.config?.pca_components}`
+  );
+
+  if (charts['rs-stab-chart']) charts['rs-stab-chart'].destroy();
+  const el = document.getElementById('rs-stab-chart');
+  if (el) charts['rs-stab-chart'] = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Mean Accuracy',
+        data: results.map(r => (r.mean_acc||0)*100),
+        backgroundColor: results.map(r => RS_COLORS[r.config?.method]||'#888'),
+        error: results.map(r => (r.std_acc||0)*100),
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display:false } },
+      scales: {
+        x: { ticks:{color:TICK,font:FONT}, grid:{color:GRID} },
+        y: { ticks:{color:TICK,font:FONT}, grid:{color:GRID}, beginAtZero:true, max:100 },
+      }
+    }
+  });
+
+  const tbody = document.getElementById('rs-stab-body');
+  tbody.innerHTML = results.map(r => `<tr>
+    <td style="padding:5px 8px">${labels[results.indexOf(r)]}</td>
+    <td style="padding:5px 8px;text-align:center;font-weight:600">${r.mean_acc!=null?(r.mean_acc*100).toFixed(1)+'%':'—'}</td>
+    <td style="padding:5px 8px;text-align:center;color:${(r.std_acc||0)>0.05?'#c62828':'#2e7d32'}">
+      ±${r.std_acc!=null?(r.std_acc*100).toFixed(1)+'%':'—'}</td>
+    <td style="padding:5px 8px;text-align:center">${r.min_acc!=null?(r.min_acc*100).toFixed(1)+'%':'—'}</td>
+    <td style="padding:5px 8px;text-align:center">${r.max_acc!=null?(r.max_acc*100).toFixed(1)+'%':'—'}</td>
+  </tr>`).join('');
+}
+
+function rsExportCSV() {
+  if (!_rsResults.length) { alert('Нет данных'); return; }
+  const cols = ['method','threshold','pca_components','accuracy','train_accuracy',
+                'n_defects','time_ms','n_neighbors','knn_metric','n_estimators','max_depth'];
+  const rows = [cols.join(',')];
+  for (const r of _rsResults) {
+    rows.push(cols.map(c => r[c] ?? '').join(','));
+  }
+  const blob = new Blob([rows.join('\n')], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = `grid_search_${Date.now()}.csv`; a.click();
+}
+
+function rsExportJSON() {
+  if (!_rsResults.length) { alert('Нет данных'); return; }
+  const blob = new Blob([JSON.stringify(_rsResults, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = `grid_search_${Date.now()}.json`; a.click();
+}
+
+async function rsLoadCachedResults() {
+  try {
+    const res = await fetch(`${API}/research/results`);
+    const data = await res.json();
+    if (data.results?.length) {
+      _rsResults = data.results;
+      rsRenderAll();
+    }
+  } catch {}
+}
+
+// ════════ CONFUSION MATRIX & DETAILED ANALYSIS ════════════════════════════
+
+const CLASS_NAMES_SHORT = ['color', 'cut', 'hole', 'metal', 'thread'];
+const CLASS_NAMES_FULL  = ['color', 'cut', 'hole', 'metal_contamination', 'thread'];
+
+// Хранилище загруженных detail-результатов {method: detailResult}
+let _rsCmData = {};
+// Список CM накопленных для проблемных пар
+let _rsCmList = [];
+
+function rsRenderAll() {
+  if (!_rsResults.length) return;
+  rsRenderMethodsTable();
+  rsRenderBestCard();
+  rsRenderMethodTabs();
+  rsRenderHeatmap(_rsHeatmapMethod || _rsResults[0]?.method || '');
+  rsRenderScatterAll();
+  rsRenderBarMethods();
+  rsCheckFeatureImportance();
+  // После render методов — обновляем CM-табы
+  rsRenderCmMethodTabs();
+}
+
+function rsGetBestConfigs() {
+  const byMethod = {};
+  for (const r of _rsResults) {
+    if (r.accuracy == null) continue;
+    const m = r.method;
+    if (!byMethod[m] || r.accuracy > byMethod[m].accuracy) byMethod[m] = r;
+  }
+  return byMethod;
+}
+
+// ── Confusion Matrix Tabs ────────────────────────────────────────────────────
+
+function rsRenderCmMethodTabs() {
+  const byMethod = rsGetBestConfigs();
+  const methods  = Object.keys(byMethod);
+  const container = document.getElementById('rs-cm-method-tabs');
+  if (!container) return;
+
+  container.innerHTML = methods.map(m => {
+    const loaded = !!_rsCmData[m];
+    return `<button onclick="rsLoadCmForMethod('${m}')" id="rs-cm-tab-${m}"
+      style="padding:5px 12px;border-radius:6px;border:1.5px solid ${RS_COLORS[m]||'#ccc'};
+             cursor:pointer;font-size:0.79rem;
+             background:${loaded ? RS_COLORS[m]||'#333' : 'var(--bg)'};
+             color:${loaded ? '#fff' : 'var(--text)'}">
+      ${RS_LABELS[m]||m}${loaded ? ' ✓' : ''}
+    </button>`;
+  }).join('');
+
+  // Показываем секцию
+  const sec = document.getElementById('rs-detail-section');
+  if (sec && methods.length) sec.classList.remove('hidden');
+}
+
+async function rsLoadCmForMethod(method) {
+  // Если уже загружены — просто показать
+  if (_rsCmData[method]) {
+    rsDisplayCm(method);
+    return;
+  }
+
+  const byMethod = rsGetBestConfigs();
+  const best = byMethod[method];
+  if (!best) return;
+
+  const status = document.getElementById('rs-cm-status');
+  if (status) status.textContent = `Загружаю confusion matrix для ${RS_LABELS[method]||method}...`;
+
+  const folder  = document.getElementById('rs-folder').value || '';
+  const maxImg  = parseInt(document.getElementById('rs-maximg').value) || 30;
+
+  try {
+    const res = await fetch(`${API}/research/analyze_config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        subfolder: folder, max_images: maxImg,
+        threshold:    best.threshold,
+        pca_n:        best.pca_components,
+        method:       method,
+        s_min:        best.s_min  || 40,
+        s_max:        best.s_max  || 1500,
+        k_param:      5,
+        n_neighbors:  best.n_neighbors  || 5,
+        knn_metric:   best.knn_metric   || 'euclidean',
+        n_estimators: best.n_estimators || 100,
+        max_depth:    best.max_depth    || null,
+        random_state: 42,
+      }),
+    });
+    const data = await res.json();
+    _rsCmData[method] = data;
+
+    // Добавляем CM в список для проблемных пар
+    if (data.confusion_matrix) {
+      _rsCmList.push({ method, ...data });
+    }
+
+    rsDisplayCm(method);
+    rsUpdateProblemPairs();
+    rsRenderCmMethodTabs();  // обновить табы (добавить ✓)
+    if (status) status.textContent = '';
+  } catch (e) {
+    if (status) status.textContent = 'Ошибка: ' + e.message;
+  }
+}
+
+function rsDisplayCm(method) {
+  const data = _rsCmData[method];
+  if (!data) return;
+
+  // Обновить стиль таба
+  document.querySelectorAll('[id^="rs-cm-tab-"]').forEach(btn => {
+    const m = btn.id.replace('rs-cm-tab-', '');
+    btn.style.background = (m === method) ? (RS_COLORS[m]||'#333') : (!!_rsCmData[m] ? (RS_COLORS[m]||'#888')+'88' : 'var(--bg)');
+    btn.style.color = (m === method || !!_rsCmData[m]) ? '#fff' : 'var(--text)';
+  });
+
+  rsRenderConfusionMatrix(data.confusion_matrix || [], method);
+  rsRenderPerClassChart(data.per_class_accuracy || {}, method);
+  rsRenderClassDistribution(data.class_distribution || {});
+  rsCheckSmallSample(data.per_class_n_test || {});
+}
+
+// ── Confusion Matrix HTML table ──────────────────────────────────────────────
+
+function rsRenderConfusionMatrix(cm, method) {
+  if (!cm.length) return;
+  const n = cm.length;
+  const names = CLASS_NAMES_SHORT;
+  const color = RS_COLORS[method] || '#1565c0';
+
+  // Максимум для нормализации цвета
+  const maxVal = Math.max(1, ...cm.flat());
+
+  // Header
+  const head = document.getElementById('rs-cm-head');
+  head.innerHTML = `<tr>
+    <th style="padding:5px 6px;background:var(--border)">GT \\ Pred</th>
+    ${names.map((n, j) => `<th style="padding:5px 8px;background:var(--border);color:${color};text-align:center;font-size:0.76rem">${n}</th>`).join('')}
+    <th style="padding:5px 6px;background:var(--border);font-size:0.76rem">Recall</th>
+  </tr>`;
+
+  // Body
+  const tbody = document.getElementById('rs-cm-body');
+  tbody.innerHTML = cm.map((row, i) => {
+    const rowSum = row.reduce((a, b) => a + b, 0);
+    const recall = rowSum > 0 ? (row[i] / rowSum * 100).toFixed(0) : '—';
+    const cells = row.map((v, j) => {
+      const isDiag = i === j;
+      const pct = rowSum > 0 ? v / rowSum : 0;
+      let bg = '#fff';
+      if (isDiag && v > 0) {
+        const g = Math.round(180 + pct * 75);
+        bg = `rgb(100,${g},100)`;
+      } else if (!isDiag && v > 0) {
+        const r = Math.round(220 + pct * 35);
+        bg = `rgb(${r},180,180)`;
+      }
+      const textColor = (isDiag && pct > 0.5) ? '#fff' : (!isDiag && v > 0 && pct > 0.3) ? '#7b0000' : '#333';
+      return `<td style="padding:5px 8px;text-align:center;background:${bg};color:${textColor};
+                         font-weight:${isDiag?'700':'400'};border:1px solid #eee;font-size:0.8rem">
+        ${v}${rowSum > 0 ? `<br><span style="font-size:0.68rem;opacity:0.8">${(pct*100).toFixed(0)}%</span>` : ''}
+      </td>`;
+    }).join('');
+    return `<tr>
+      <td style="padding:5px 8px;font-size:0.76rem;font-weight:600;color:${color};background:var(--border)">${names[i]||i}</td>
+      ${cells}
+      <td style="padding:5px 8px;text-align:center;font-size:0.8rem;font-weight:600">${recall}%</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Per-class accuracy bar chart ─────────────────────────────────────────────
+
+function rsRenderPerClassChart(perClassAcc, method) {
+  const names  = CLASS_NAMES_SHORT;
+  const values = names.map((_, i) => {
+    const v = perClassAcc[String(i)] ?? perClassAcc[i];
+    return v != null ? Math.round(v * 100) : null;
+  });
+  const color = RS_COLORS[method] || '#888';
+
+  if (charts['rs-per-class-chart']) charts['rs-per-class-chart'].destroy();
+  const el = document.getElementById('rs-per-class-chart');
+  if (!el) return;
+  charts['rs-per-class-chart'] = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [{
+        label: 'Accuracy (%)',
+        data: values,
+        backgroundColor: values.map(v => v == null ? '#ccc' : v >= 70 ? '#2e7d32' : v >= 40 ? '#f57f17' : '#c62828'),
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: TICK, font: FONT }, grid: { color: GRID } },
+        y: { ticks: { color: TICK, font: FONT }, grid: { color: GRID },
+             beginAtZero: true, max: 100,
+             title: { display: true, text: '%', color: TICK, font: FONT } },
+      }
+    }
+  });
+}
+
+// ── Class distribution bar chart ─────────────────────────────────────────────
+
+function rsRenderClassDistribution(dist) {
+  const names  = CLASS_NAMES_SHORT;
+  const values = names.map((_, i) => dist[String(i)] ?? dist[i] ?? 0);
+
+  if (charts['rs-class-dist-chart']) charts['rs-class-dist-chart'].destroy();
+  const el = document.getElementById('rs-class-dist-chart');
+  if (!el) return;
+  charts['rs-class-dist-chart'] = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [{
+        label: 'Дефектов',
+        data: values,
+        backgroundColor: '#90caf9',
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: TICK, font: FONT }, grid: { color: GRID } },
+        y: { ticks: { color: TICK, font: FONT }, grid: { color: GRID },
+             beginAtZero: true, stepSize: 1,
+             title: { display: true, text: 'Кол-во', color: TICK, font: FONT } },
+      }
+    }
+  });
+}
+
+// ── Small sample warning ─────────────────────────────────────────────────────
+
+function rsCheckSmallSample(perClassNTest) {
+  const warn = document.getElementById('rs-small-sample-warn');
+  if (!warn) return;
+  const hasSmall = Object.values(perClassNTest).some(n => n < 5 && n > 0);
+  warn.classList.toggle('hidden', !hasSmall);
+}
+
+// ── Problem pairs ─────────────────────────────────────────────────────────────
+
+async function rsUpdateProblemPairs() {
+  if (!_rsCmList.length) return;
+
+  try {
+    const res = await fetch(`${API}/research/problem_pairs`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ results: _rsCmList, top_n: 5 }),
+    });
+    const data = await res.json();
+    rsRenderProblemPairs(data.pairs || []);
+  } catch (e) {
+    log.warn && console.warn('problem_pairs:', e);
+  }
+}
+
+function rsRenderProblemPairs(pairs) {
+  const sec = document.getElementById('rs-pairs-section');
+  if (sec) sec.classList.remove('hidden');
+
+  const maxCount = pairs[0]?.count || 1;
+  const tbody = document.getElementById('rs-pairs-body');
+  if (!tbody || !pairs.length) return;
+
+  tbody.innerHTML = pairs.map(p => {
+    const barW = Math.round((p.count / maxCount) * 100);
+    return `<tr>
+      <td style="padding:6px 10px;font-weight:600;color:#c62828">${p.gt_name}</td>
+      <td style="padding:6px 10px;color:#1565c0">${p.pred_name}</td>
+      <td style="padding:6px 10px;text-align:center;font-weight:700">${p.count}</td>
+      <td style="padding:6px 10px;text-align:center">${(p.pct*100).toFixed(1)}%</td>
+      <td style="padding:6px 10px;min-width:120px">
+        <div style="background:#ef9a9a;height:14px;border-radius:3px;width:${barW}%"></div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── rsAnalyzeDetail: кнопка "Матрица ошибок" ────────────────────────────────
+
+function rsAnalyzeDetail() {
+  const byMethod = rsGetBestConfigs();
+  const methods  = Object.keys(byMethod);
+  if (!methods.length) { alert('Сначала запустите grid search'); return; }
+
+  const detail = document.getElementById('rs-detail-section');
+  if (detail) detail.classList.remove('hidden');
+  detail?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Загружаем для лучшего метода по умолчанию
+  const best = [...methods].sort((a, b) =>
+    (byMethod[b]?.accuracy||0) - (byMethod[a]?.accuracy||0)
+  )[0];
+  rsRenderCmMethodTabs();
+  rsLoadCmForMethod(best);
+}
+
+// ════════ РАСШИРЕННАЯ СТАБИЛЬНОСТЬ (10 запусков) ════════════════════════════
+
+async function rsRunStability10() {
+  const byMethod = rsGetBestConfigs();
+  const methods  = Object.keys(byMethod).sort((a, b) =>
+    (byMethod[b]?.accuracy||0) - (byMethod[a]?.accuracy||0)
+  );
+  const top3 = methods.slice(0, 3);
+  if (!top3.length) { alert('Сначала запустите grid search'); return; }
+
+  const btn    = document.getElementById('rs-stab10-btn');
+  const status = document.getElementById('rs-stab10-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Считаю...';
+  if (status) status.textContent = `Запускаю ${10} прогонов × ${top3.length} методов...`;
+
+  const folder  = document.getElementById('rs-folder').value || '';
+  const maxImg  = parseInt(document.getElementById('rs-maximg').value) || 30;
+  const nReps   = 10;
+
+  const configs = top3.map(m => byMethod[m]);
+
+  try {
+    const res = await fetch(`${API}/research/stability_10`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ subfolder: folder, max_images: maxImg, configs, n_repeats: nReps }),
+    });
+    const data = await res.json();
+    rsRenderStab10(data.stability || []);
+    rsUpdateMethodsTableStd(data.stability || []);
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Устойчивость (10 запусков)';
+    if (status) status.textContent = '';
+  }
+}
+
+function rsRenderStab10(results) {
+  const sec = document.getElementById('rs-stab10-section');
+  if (sec) sec.classList.remove('hidden');
+
+  // Error bar chart
+  const labels  = results.map(r => `${RS_LABELS[r.config?.method]||r.config?.method}`);
+  const means   = results.map(r => r.mean_acc != null ? +(r.mean_acc*100).toFixed(1) : null);
+  const stds    = results.map(r => r.std_acc  != null ? +(r.std_acc *100).toFixed(1) : null);
+
+  if (charts['rs-stab10-chart']) charts['rs-stab10-chart'].destroy();
+  const el = document.getElementById('rs-stab10-chart');
+  if (el) charts['rs-stab10-chart'] = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Mean Accuracy (%)',
+          data: means,
+          backgroundColor: results.map(r => RS_COLORS[r.config?.method]||'#888'),
+          yAxisID: 'y',
+        },
+        {
+          type: 'line',
+          label: 'Std (%)',
+          data: stds,
+          borderColor: '#c62828',
+          backgroundColor: '#c6282820',
+          pointStyle: 'circle',
+          pointRadius: 6,
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color:'#333', font:FONT, boxWidth:10 } },
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const i = items[0]?.dataIndex;
+              if (i == null) return '';
+              const r = results[i];
+              return r ? `Min: ${(r.min_acc*100).toFixed(1)}%  Max: ${(r.max_acc*100).toFixed(1)}%\nЗапуски: ${r.accs?.map(a=>(a*100).toFixed(0)+'%').join(', ')||'—'}` : '';
+            }
+          }
+        }
+      },
+      scales: {
+        x:  { ticks:{color:TICK,font:FONT}, grid:{color:GRID} },
+        y:  { ticks:{color:TICK,font:FONT}, grid:{color:GRID}, beginAtZero:true, max:100,
+              title:{display:true,text:'Mean Acc (%)',color:TICK,font:FONT} },
+        y2: { position:'right', ticks:{color:'#c62828',font:FONT}, grid:{display:false},
+              title:{display:true,text:'Std (%)',color:'#c62828',font:FONT},
+              beginAtZero:true, max:30 },
+      }
+    }
+  });
+
+  // Table
+  const tbody = document.getElementById('rs-stab10-body');
+  if (!tbody) return;
+  tbody.innerHTML = results.map(r => {
+    const unstable = r.unstable || (r.std_acc != null && r.std_acc > 0.10);
+    const statusCell = unstable
+      ? '<span style="color:#c62828;font-size:0.75rem">⚠ Нестабилен</span>'
+      : '<span style="color:#2e7d32;font-size:0.75rem">✓ Стабилен</span>';
+    const m = r.config?.method || '';
+    return `<tr style="${unstable ? 'background:#fff8e1' : ''}">
+      <td style="padding:6px 10px;font-weight:600;color:${RS_COLORS[m]||'#333'}">${RS_LABELS[m]||m}</td>
+      <td style="padding:6px 10px;text-align:center">${r.config?.threshold ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:center">${r.config?.pca_components ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:center;font-weight:700">
+        ${r.mean_acc!=null?(r.mean_acc*100).toFixed(1)+'%':'—'}</td>
+      <td style="padding:6px 10px;text-align:center;color:${unstable?'#c62828':'#2e7d32'}">
+        ±${r.std_acc!=null?(r.std_acc*100).toFixed(1)+'%':'—'}</td>
+      <td style="padding:6px 10px;text-align:center">
+        ${r.min_acc!=null?(r.min_acc*100).toFixed(1)+'%':'—'}</td>
+      <td style="padding:6px 10px;text-align:center">
+        ${r.max_acc!=null?(r.max_acc*100).toFixed(1)+'%':'—'}</td>
+      <td style="padding:6px 10px;text-align:center">${statusCell}</td>
+    </tr>`;
+  }).join('');
+
+  // Предупреждение если хоть один нестабилен
+  const anyUnstable = results.some(r => r.unstable);
+  if (anyUnstable) {
+    const warn = document.createElement('div');
+    warn.style.cssText = 'background:#fff3e0;border:1px solid #ffb300;border-radius:6px;padding:10px 14px;font-size:0.8rem;margin-top:10px;color:#e65100';
+    warn.innerHTML = '⚠ <b>Нестабильный результат</b>: std &gt; 10% означает, что accuracy сильно зависит от случайного разбиения train/test. Рекомендуется: снизить Threshold для увеличения числа дефектов, или использовать K-Fold кросс-валидацию.';
+    document.getElementById('rs-stab10-section')?.querySelector('.card')?.appendChild(warn);
+  }
+}
+
+function rsUpdateMethodsTableStd(stability) {
+  // Добавляем колонку Std в таблицу сравнения методов если её нет
+  const table = document.getElementById('rs-methods-table');
+  if (!table) return;
+  const headerRow = table.querySelector('thead tr');
+  if (headerRow && !headerRow.querySelector('[data-col="std"]')) {
+    const th = document.createElement('th');
+    th.setAttribute('data-col', 'std');
+    th.style.cssText = 'padding:7px 10px';
+    th.textContent = 'Std (10 runs)';
+    headerRow.appendChild(th);
+  }
+  // Обновляем строки
+  const rows = table.querySelectorAll('tbody tr');
+  rows.forEach(row => {
+    const methodCell = row.cells[0];
+    if (!methodCell) return;
+    const methodText = methodCell.textContent.trim().replace('★ ', '');
+    const stabResult = stability.find(r => (RS_LABELS[r.config?.method]||r.config?.method) === methodText);
+    if (!stabResult) return;
+    let stdCell = row.querySelector('[data-col="std"]');
+    if (!stdCell) {
+      stdCell = document.createElement('td');
+      stdCell.setAttribute('data-col', 'std');
+      stdCell.style.cssText = 'padding:6px 10px;text-align:center';
+      row.appendChild(stdCell);
+    }
+    const unstable = stabResult.unstable || stabResult.std_acc > 0.10;
+    stdCell.innerHTML = stabResult.std_acc != null
+      ? `<span style="color:${unstable?'#c62828':'#2e7d32'}">±${(stabResult.std_acc*100).toFixed(1)}%</span>`
+      : '—';
+  });
+}
+
+// ── Диагностика детектируемости ─────────────────────────────────────────────
+
+let _rsDetectData = null;
+const RS_CLASS_COLORS = ['#e53935','#fb8c00','#43a047','#1e88e5','#8e24aa'];
+
+async function rsRunDetectability() {
+  const btn = document.getElementById('rs-detect-btn');
+  const status = document.getElementById('rs-detect-status');
+  btn.disabled = true;
+  btn.textContent = 'Загружаю...';
+  status.textContent = 'Инференс PatchCore для всех изображений...';
+
+  // Параметры из текущих полей сайдбара
+  const folder = document.getElementById('rs-folder')?.value || '';
+  const sMin   = parseFloat(document.getElementById('rs-smin')?.value || 40);
+  const sMax   = parseFloat(document.getElementById('rs-smax')?.value || 1500);
+  const kParam = parseInt(document.getElementById('rs-k-param')?.value || 5);
+
+  try {
+    const res = await fetch(`${API}/research/detectability`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        subfolder: folder,
+        max_images: 200,
+        thresholds: [0.70, 0.75, 0.80, 0.85, 0.90, 0.92, 0.95],
+        s_min: sMin, s_max: sMax, k_param: kParam,
+      })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    _rsDetectData = await res.json();
+    status.textContent = `Готово за ${_rsDetectData.time_ms} мс — ${_rsDetectData.n_images_total} изображений`;
+    rsRenderDetectability(_rsDetectData);
+  } catch(e) {
+    status.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Запустить диагностику';
+  }
+}
+
+function rsRenderDetectability(data) {
+  const sec = document.getElementById('rs-detect-section');
+  sec.classList.remove('hidden');
+  rsRenderDetectMatrix(data);
+  rsRenderDetectScores(data);
+  rsRenderDetectAreas(data);
+  rsRenderDetectRecs(data);
+  // Прокрутка к секции
+  sec.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function rsRenderDetectMatrix(data) {
+  const canvas = document.getElementById('rs-detect-canvas');
+  const thresholds  = data.thresholds || [];
+  const classNames  = data.class_names || [];
+  const perClass    = data.per_class   || {};
+
+  const nCls = classNames.length;
+  const nThr = thresholds.length;
+  if (!nCls || !nThr) return;
+
+  const cellW = 72, cellH = 34;
+  const padL = 160, padT = 50, padB = 20;
+  const totalW = padL + nThr * cellW * 2 + 10;   // 2 sub-cols: raw + filtered
+  const totalH = padT + nCls * cellH + padB;
+
+  canvas.width  = totalW;
+  canvas.height = totalH;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, totalW, totalH);
+
+  // Заголовок
+  ctx.fillStyle = '#333';
+  ctx.font = 'bold 11px Manrope,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('RAW (до S_min)', padL + nThr * cellW * 0.5, 16);
+  ctx.fillStyle = '#555';
+  ctx.fillText('FILTERED (после S_min)', padL + nThr * cellW + nThr * cellW * 0.5, 16);
+
+  // Разделитель
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(padL + nThr * cellW, padT - 8);
+  ctx.lineTo(padL + nThr * cellW, totalH - padB + 4); ctx.stroke();
+
+  // Threshold headers
+  ctx.font = '10px Manrope,sans-serif';
+  ctx.fillStyle = '#333';
+  thresholds.forEach((thr, ti) => {
+    const x1 = padL + ti * cellW + cellW/2;
+    const x2 = padL + nThr * cellW + ti * cellW + cellW/2;
+    ctx.textAlign = 'center';
+    ctx.fillText(thr.toFixed(2), x1, padT - 6);
+    ctx.fillText(thr.toFixed(2), x2, padT - 6);
+  });
+
+  // Ячейки
+  classNames.forEach((cls, ci) => {
+    const y = padT + ci * cellH;
+    // Имя класса
+    ctx.textAlign = 'right';
+    ctx.font = '11px Manrope,sans-serif';
+    ctx.fillStyle = RS_CLASS_COLORS[ci] || '#333';
+    ctx.fillText(cls, padL - 8, y + cellH/2 + 4);
+
+    const clsData = perClass[cls];
+    if (!clsData) return;
+
+    thresholds.forEach((thr, ti) => {
+      const key = thr.toFixed(3);
+      const td = clsData.by_threshold?.[key] || {};
+      const pctRaw = td.pct_raw      || 0;
+      const pctFil = td.pct_filtered || 0;
+
+      // RAW cell
+      const xRaw = padL + ti * cellW;
+      const cRaw = _pctToColor(pctRaw);
+      ctx.fillStyle = cRaw;
+      ctx.fillRect(xRaw, y, cellW - 2, cellH - 2);
+      ctx.fillStyle = pctRaw > 0.5 ? '#fff' : '#222';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 11px Manrope,sans-serif';
+      ctx.fillText((pctRaw*100).toFixed(0)+'%', xRaw + cellW/2, y + cellH/2 + 4);
+
+      // FILTERED cell
+      const xFil = padL + nThr * cellW + ti * cellW;
+      const cFil = _pctToColor(pctFil);
+      ctx.fillStyle = cFil;
+      ctx.fillRect(xFil, y, cellW - 2, cellH - 2);
+      ctx.fillStyle = pctFil > 0.5 ? '#fff' : '#222';
+      ctx.fillText((pctFil*100).toFixed(0)+'%', xFil + cellW/2, y + cellH/2 + 4);
+    });
+  });
+}
+
+function _pctToColor(p) {
+  // 0=red, 0.5=orange, 1=green
+  p = Math.max(0, Math.min(1, p));
+  if (p === 0) return '#ef9a9a';
+  const r = Math.round(220 - p*150);
+  const g = Math.round(60  + p*130);
+  const b = 60;
+  return `rgb(${r},${g},${b})`;
+}
+
+function rsRenderDetectScores(data) {
+  const perClass = data.per_class || {};
+  const thresholds = data.thresholds || [];
+  const classNames = data.class_names || [];
+
+  const datasets = classNames.map((cls, i) => {
+    const cd = perClass[cls];
+    if (!cd) return null;
+    const scores = cd.anomaly_scores || [];
+    return {
+      label: cls,
+      data: scores.map((s, j) => ({x: j, y: s})),
+      backgroundColor: RS_CLASS_COLORS[i] + 'aa',
+      borderColor: RS_CLASS_COLORS[i],
+      borderWidth: 1,
+      pointRadius: 4,
+      type: 'scatter',
+    };
+  }).filter(Boolean);
+
+  const statsDiv = document.getElementById('rs-detect-scores-stats');
+  statsDiv.innerHTML = classNames.map((cls, i) => {
+    const cd = perClass[cls];
+    if (!cd) return '';
+    const s = cd.score_stats || {};
+    return `<span style="color:${RS_CLASS_COLORS[i]};font-weight:600">${cls}</span>: `
+      + `max=${s.max?.toFixed(3)}, p90=${s.p90?.toFixed(3)}, mean=${s.mean?.toFixed(3)}`;
+  }).join(' &nbsp;|&nbsp; ');
+
+  // Вертикальные линии для threshold'ов
+  const annotations = {};
+  thresholds.forEach((thr, i) => {
+    annotations['thr_'+i] = {
+      type: 'line', scaleID: 'y', value: thr,
+      borderColor: '#00000066', borderWidth: 1, borderDash: [3,3],
+      label: {display: true, content: thr.toFixed(2), position: 'end', font:{size:9}},
+    };
+  });
+
+  const ctx2 = document.getElementById('rs-detect-scores-chart').getContext('2d');
+  if (window._rsDetectScoresChart) window._rsDetectScoresChart.destroy();
+  window._rsDetectScoresChart = new Chart(ctx2, {
+    type: 'scatter',
+    data: {datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {position:'top', labels:{font:{size:10}}},
+        annotation: Object.keys(annotations).length ? {annotations} : undefined,
+        tooltip: {callbacks: {
+          label: ctx => `${ctx.dataset.label}: score=${ctx.parsed.y.toFixed(4)}`
+        }}
+      },
+      scales: {
+        x: {display:false},
+        y: {title:{display:true, text:'Max anomaly score', font:{size:10}},
+            min: 0, max: 1.05}
+      }
+    }
+  });
+}
+
+function rsRenderDetectAreas(data) {
+  const perClass   = data.per_class   || {};
+  const thresholds = data.thresholds  || [];
+  const classNames = data.class_names || [];
+  const sMin       = data.s_min       || 40;
+  const minThr     = Math.min(...thresholds);
+  const minKey     = minThr.toFixed(3);
+
+  // Для каждого класса берём stats площадей при минимальном threshold
+  const labels   = [];
+  const areaData = []; // mean area raw
+  const periData = []; // mean perimeter raw
+  const arData   = []; // mean aspect ratio raw
+  const colors   = [];
+
+  classNames.forEach((cls, i) => {
+    const cd = perClass[cls];
+    if (!cd) return;
+    const td = cd.by_threshold?.[minKey];
+    if (!td || td.n_contours_raw === 0) return;
+    labels.push(cls);
+    areaData.push(td.area_stats?.mean || 0);
+    periData.push(td.perimeter_stats?.mean || 0);
+    arData.push(td.aspect_ratio_stats?.mean || 1);
+    colors.push(RS_CLASS_COLORS[i]);
+  });
+
+  const statsDiv = document.getElementById('rs-detect-areas-stats');
+  const statsLines = classNames.map((cls, i) => {
+    const cd = perClass[cls];
+    if (!cd) return '';
+    const td = cd.by_threshold?.[minKey];
+    if (!td) return '';
+    const n = td.n_contours_raw;
+    if (!n) return `<b style="color:${RS_CLASS_COLORS[i]}">${cls}</b>: нет контуров при thr=${minThr}`;
+    const nFil = td.n_filtered;
+    const arSt = td.aspect_ratio_stats || {};
+    const areaSt = td.area_stats || {};
+    const periSt = td.perimeter_stats || {};
+    const lost = n - nFil;
+    const warn = areaSt.mean < sMin ? ' ⚠ площадь < S_min' : '';
+    const thin = arSt.mean > 3 ? ` ⚠ вытянутые (AR=${arSt.mean?.toFixed(1)})` : '';
+    return `<b style="color:${RS_CLASS_COLORS[i]}">${cls}</b>: ${n} конт., `
+      + `filtered=${nFil} (потеряно ${lost}${warn}${thin}), `
+      + `площадь=${areaSt.mean?.toFixed(0)} px², периметр=${periSt.mean?.toFixed(0)} px`;
+  }).filter(Boolean);
+  statsDiv.innerHTML = statsLines.join('<br>');
+
+  const ctx3 = document.getElementById('rs-detect-areas-chart').getContext('2d');
+  if (window._rsDetectAreasChart) window._rsDetectAreasChart.destroy();
+
+  if (!labels.length) {
+    statsDiv.innerHTML += '<br><em>Нет контуров ни у одного класса при минимальном threshold.</em>';
+    return;
+  }
+
+  window._rsDetectAreasChart = new Chart(ctx3, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Средняя площадь (px²)',
+          data: areaData,
+          backgroundColor: colors.map(c => c+'99'),
+          borderColor: colors,
+          borderWidth: 1.5,
+          yAxisID: 'yArea',
+        },
+        {
+          label: 'Средний периметр (px)',
+          data: periData,
+          type: 'line',
+          borderColor: '#333',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 5,
+          yAxisID: 'yArea',
+        },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {position:'top', labels:{font:{size:10}}},
+        annotation: {
+          annotations: {
+            sMinLine: {
+              type: 'line', scaleID: 'yArea', value: sMin,
+              borderColor: '#e53935', borderWidth: 2, borderDash: [5,3],
+              label: {display:true, content:`S_min=${sMin}`, position:'end',
+                      color:'#e53935', font:{size:10}},
+            }
+          }
+        }
+      },
+      scales: {
+        yArea: {
+          title: {display:true, text:'px² / px', font:{size:10}},
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+}
+
+function rsRenderDetectRecs(data) {
+  const recs = data.recommendations || [];
+  const div = document.getElementById('rs-detect-recs');
+  if (!recs.length) { div.classList.add('hidden'); return; }
+  div.classList.remove('hidden');
+  div.innerHTML = '<b>Диагностические рекомендации:</b><br>'
+    + recs.map(r => `• ${r}`).join('<br>');
+}
+
+// ── Recall vs FPR (ROC-like) ────────────────────────────────────────────────
+
+let _rsRocData = null;
+
+// Палитра threshold → цвет
+const ROC_THR_COLORS = {
+  '0.7':  '#e53935', '0.70': '#e53935',
+  '0.75': '#fb8c00',
+  '0.8':  '#fdd835', '0.80': '#fdd835',
+  '0.85': '#7cb342',
+  '0.9':  '#039be5', '0.90': '#039be5',
+  '0.95': '#5e35b1',
+};
+function _thrColor(thr) {
+  const k = thr.toFixed(2);
+  return ROC_THR_COLORS[k] || ROC_THR_COLORS[String(thr)] || '#888';
+}
+
+async function rsRunRecallFpr() {
+  const btn    = document.getElementById('rs-roc-btn');
+  const status = document.getElementById('rs-detect-status');
+  const target = document.getElementById('rs-roc-target')?.value || 'thread';
+  const sMin   = parseFloat(document.getElementById('rs-smin')?.value || 5);
+  const kParam = parseInt(document.getElementById('rs-k-param')?.value || 5);
+
+  btn.disabled = true;
+  btn.textContent = 'Загружаю...';
+  status.textContent = `Инференс PatchCore (дефекты + good)…`;
+
+  try {
+    const res = await fetch(`${API}/research/recall_fpr`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        target_class: target,
+        max_images:   200,
+        max_good:     60,
+        thresholds:   [0.70, 0.75, 0.80, 0.85, 0.90, 0.95],
+        s_max_values: [1000, 5000, 10000, 50000, 100000, 300000, 600000, 1000000],
+        s_min:   sMin,
+        k_param: kParam,
+      })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    _rsRocData = await res.json();
+    status.textContent = `Готово за ${_rsRocData.time_ms} мс`;
+    rsRenderRocAll(_rsRocData);
+  } catch(e) {
+    status.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Recall vs FPR (good-анализ)';
+  }
+}
+
+function rsRenderRocAll(data) {
+  const sec = document.getElementById('rs-rocfpr-section');
+  sec.classList.remove('hidden');
+  rsRenderRocBaseline(data);
+  rsRenderRocShapeStats(data);
+  rsRenderRocScatter(data);
+  rsRenderRocRecommendation(data);
+  sec.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function rsRenderRocBaseline(data) {
+  const tbody = document.getElementById('rs-roc-baseline-body');
+  const n = data.n_good_images || 1;
+  tbody.innerHTML = (data.good_baseline_fpr || []).map(pt => {
+    const fprPct = (pt.fpr * 100).toFixed(1);
+    const ok = pt.fpr < 0.05;
+    const warn = pt.fpr >= 0.20;
+    const color = ok ? '#2e7d32' : warn ? '#b71c1c' : '#e65100';
+    const verdict = ok ? '✓ Низкий' : warn ? '⚠ Высокий' : '~ Умеренный';
+    return `<tr>
+      <td style="padding:5px 10px;text-align:center">${pt.threshold.toFixed(2)}</td>
+      <td style="padding:5px 10px;text-align:center">${pt.n_fp} / ${n}</td>
+      <td style="padding:5px 10px;text-align:center;font-weight:600;color:${color}">${fprPct}%</td>
+      <td style="padding:5px 10px;text-align:center;color:${color}">${verdict}</td>
+    </tr>`;
+  }).join('');
+}
+
+function rsRenderRocShapeStats(data) {
+  const st  = data.shape_target || {};
+  const sg  = data.shape_good   || {};
+  const cls = data.target_class || 'target';
+
+  function fmt(obj, key) {
+    const v = obj[key];
+    if (!v) return '—';
+    return `mean=${v.mean?.toFixed(3)}, max=${v.max?.toFixed(3)}, p90=${v.p90?.toFixed(3)}`;
+  }
+
+  document.getElementById('rs-roc-shape-target').innerHTML = [
+    `<b>Класс:</b> ${cls}`,
+    `<b>Контуров:</b> ${st.n_contours || 0}`,
+    `<b>Площадь:</b> ${fmt(st, 'area')}`,
+    `<b>Solidity:</b> ${fmt(st, 'solidity')}`,
+    `<b>Compactness:</b> ${fmt(st, 'compactness')}`,
+    `<b>Aspect ratio:</b> ${fmt(st, 'aspect_ratio')}`,
+  ].join('<br>');
+
+  document.getElementById('rs-roc-shape-good').innerHTML = [
+    `<b>Good изображений:</b> ${data.n_good_images || 0}`,
+    `<b>Контуров (FP raw):</b> ${sg.n_contours || 0}`,
+    `<b>Площадь:</b> ${fmt(sg, 'area')}`,
+    `<b>Solidity:</b> ${fmt(sg, 'solidity')}`,
+    `<b>Compactness:</b> ${fmt(sg, 'compactness')}`,
+    `<b>Aspect ratio:</b> ${fmt(sg, 'aspect_ratio')}`,
+  ].join('<br>');
+
+  // Вердикт: можно ли разделить по форме?
+  const solidityTarget = st.solidity?.mean ?? 1;
+  const solidityGood   = sg.solidity?.mean ?? 1;
+  const compTarget     = st.compactness?.mean ?? 1;
+  const compGood       = sg.compactness?.mean ?? 1;
+  const solidDiff      = Math.abs(solidityTarget - solidityGood);
+  const compDiff       = Math.abs(compTarget     - compGood);
+  let verdict = '';
+  if (solidDiff > 0.15 || compDiff > 0.15) {
+    verdict = `✓ Формы различимы (Δsolidity=${solidDiff.toFixed(2)}, Δcompactness=${compDiff.toFixed(2)}). `
+      + `Solidity-фильтр или compactness-фильтр может заменить S_max.`;
+    document.getElementById('rs-roc-shape-verdict').style.cssText =
+      'background:#e8f5e9;padding:8px;color:#2e7d32';
+  } else {
+    verdict = `✗ Формы слабо различимы (Δsolidity=${solidDiff.toFixed(2)}, Δcompactness=${compDiff.toFixed(2)}). `
+      + `Фильтрация по форме не даст преимущества — нужно работать с threshold.`;
+    document.getElementById('rs-roc-shape-verdict').style.cssText =
+      'background:#fff3cd;padding:8px;color:#e65100';
+  }
+  document.getElementById('rs-roc-shape-verdict').textContent = verdict;
+
+  // Гистограммы solidity и compactness
+  _renderRocHist('rs-roc-solidity-chart', st.solidity_hist, sg.solidity_hist, 'Solidity');
+  _renderRocHist('rs-roc-compact-chart',  st.compact_hist,  sg.compact_hist,  'Compactness');
+}
+
+function _renderRocHist(canvasId, histTarget, histGood, label) {
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return;
+  if (window['_roc_hist_'+canvasId]) window['_roc_hist_'+canvasId].destroy();
+
+  const edgesT  = histTarget?.edges || [];
+  const countsT = histTarget?.counts || [];
+  const edgesG  = histGood?.edges || [];
+  const countsG = histGood?.counts || [];
+  if (!edgesT.length && !edgesG.length) return;
+
+  // Use target edges as labels (or good if target empty)
+  const edges  = edgesT.length ? edgesT : edgesG;
+  const labels = edges.slice(0, -1).map((e, i) =>
+    `${e.toFixed(2)}–${edges[i+1]?.toFixed(2)}`
+  );
+
+  window['_roc_hist_'+canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {label: 'Дефект', data: countsT, backgroundColor: '#1e88e544', borderColor:'#1e88e5', borderWidth:1},
+        {label: 'Good',   data: countsG, backgroundColor: '#e5393544', borderColor:'#e53935', borderWidth:1},
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {legend:{labels:{font:{size:9}}}, title:{display:true, text:label, font:{size:10}}},
+      scales: {x:{ticks:{font:{size:8}, maxRotation:45}}, y:{ticks:{font:{size:9}}}}
+    }
+  });
+}
+
+function rsRenderRocScatter(data) {
+  const pts   = data.curve_points || [];
+  const thrs  = [...new Set(pts.map(p => p.threshold))].sort((a,b)=>a-b);
+
+  // Один dataset per threshold
+  const datasets = thrs.map(thr => {
+    const color = _thrColor(thr);
+    const thrPts = pts.filter(p => p.threshold === thr);
+    return {
+      label:           `thr=${thr.toFixed(2)}`,
+      data:            thrPts.map(p => ({
+        x:     p.fpr,
+        y:     p.recall,
+        s_max: p.s_max,
+        label: `thr=${thr.toFixed(2)}, S_max=${p.s_max.toLocaleString()}`
+      })),
+      backgroundColor: color + 'aa',
+      borderColor:     color,
+      borderWidth:     1,
+      pointRadius:     thrPts.map(p => 4 + Math.log10(Math.max(p.s_max, 100)) * 1.5),
+      pointHoverRadius: 8,
+    };
+  });
+
+  const ctx = document.getElementById('rs-roc-scatter').getContext('2d');
+  if (window._rsRocScatterChart) window._rsRocScatterChart.destroy();
+  window._rsRocScatterChart = new Chart(ctx, {
+    type: 'scatter',
+    data: {datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {position:'top', labels:{font:{size:10}}},
+        tooltip: {callbacks: {
+          label: ctx => {
+            const d = ctx.raw;
+            return `${d.label}: recall=${(ctx.parsed.y*100).toFixed(0)}%, FPR=${(ctx.parsed.x*100).toFixed(0)}%`;
+          }
+        }},
+        annotation: {annotations: {
+          fprLine:    {type:'line', scaleID:'x', value:0.10,
+            borderColor:'#e53935', borderDash:[5,3], borderWidth:1.5,
+            label:{display:true, content:'FPR=10%', position:'start',
+                   color:'#e53935', font:{size:9}}},
+          recallLine: {type:'line', scaleID:'y', value:0.50,
+            borderColor:'#43a047', borderDash:[5,3], borderWidth:1.5,
+            label:{display:true, content:'Recall=50%', position:'end',
+                   color:'#43a047', font:{size:9}}},
+        }}
+      },
+      scales: {
+        x: {min:0, max:1.05, title:{display:true, text:'FPR на good (ложные тревоги)', font:{size:10}}},
+        y: {min:0, max:1.05, title:{display:true, text:`Recall на ${data.target_class}`, font:{size:10}}},
+      }
+    }
+  });
+
+  // Pareto front: max recall при FPR ≤ 0.05, 0.10, 0.15
+  const paretoDiv = document.getElementById('rs-roc-pareto');
+  const fprLimits = [0.0, 0.05, 0.10, 0.20];
+  const lines = fprLimits.map(lim => {
+    const feasible = pts.filter(p => p.fpr <= lim);
+    if (!feasible.length) return `FPR≤${(lim*100).toFixed(0)}%: нет достижимых точек`;
+    const best = feasible.reduce((a, b) => b.recall > a.recall ? b : a);
+    return `<b>FPR ≤ ${(lim*100).toFixed(0)}%:</b> best recall = `
+      + `<span style="color:${_thrColor(best.threshold)};font-weight:600">`
+      + `${(best.recall*100).toFixed(0)}%</span> `
+      + `(thr=${best.threshold.toFixed(2)}, S_max=${best.s_max.toLocaleString()})`;
+  });
+  paretoDiv.innerHTML = '<b>Pareto-оптимальные точки:</b><br>' + lines.join('<br>');
+}
+
+function rsRenderRocRecommendation(data) {
+  const div = document.getElementById('rs-roc-recommendation');
+  const cls = data.target_class || 'thread';
+  const pts = data.curve_points || [];
+
+  // Лучшая точка при FPR ≤ 10%
+  const best10 = pts.filter(p => p.fpr <= 0.10)
+    .sort((a,b) => b.recall - a.recall)[0];
+  const best05 = pts.filter(p => p.fpr <= 0.05)
+    .sort((a,b) => b.recall - a.recall)[0];
+
+  const st = data.shape_target || {};
+  const sg = data.shape_good   || {};
+  const solidDiff = Math.abs((st.solidity?.mean||1) - (sg.solidity?.mean||1));
+  const shapeNote = solidDiff > 0.15
+    ? `Дескрипторы формы различимы (Δsolidity=${solidDiff.toFixed(2)}) — `
+      + `рассмотрите фильтр solidity < 0.7 вместо жёсткого S_max.`
+    : `Формы схожи — форма-фильтр не поможет, работайте с threshold.`;
+
+  const recLines = [];
+  if (best05)
+    recLines.push(`При FPR ≤ 5%: S_max = ${best05.s_max.toLocaleString()} px², `
+      + `threshold = ${best05.threshold.toFixed(2)}, recall = ${(best05.recall*100).toFixed(0)}%.`);
+  if (best10 && (!best05 || best10.s_max !== best05.s_max))
+    recLines.push(`При FPR ≤ 10%: S_max = ${best10.s_max.toLocaleString()} px², `
+      + `threshold = ${best10.threshold.toFixed(2)}, recall = ${(best10.recall*100).toFixed(0)}%.`);
+
+  if (!recLines.length) {
+    div.classList.add('hidden'); return;
+  }
+  div.classList.remove('hidden');
+  div.innerHTML = `<b>Рекомендации для класса «${cls}»:</b><br>`
+    + recLines.map(l => `• ${l}`).join('<br>') + '<br>'
+    + `• ${shapeNote}<br>`
+    + `• Проверьте найденные параметры на test-сплите перед финальной настройкой.`;
+}
+
+// ════ Full Grid Search ════
+
+function _rsFgParseFloats(str) {
+  return str.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
+}
+function _rsFgParseInts(str) {
+  return str.split(',').map(s => parseInt(s.trim())).filter(v => !isNaN(v));
+}
+
+async function rsFgRunFullGrid() {
+  const btn    = document.getElementById('rs-fg-run-btn');
+  const status = document.getElementById('rs-fg-status');
+  const wrap   = document.getElementById('rs-fg-progress-wrap');
+  const bar    = document.getElementById('rs-fg-progress-bar');
+  const label  = document.getElementById('rs-fg-progress-label');
+  const pct    = document.getElementById('rs-fg-progress-pct');
+
+  btn.disabled = true;
+  _rsFgResults = [];
+  wrap.classList.remove('hidden');
+  bar.style.width = '0%';
+  label.textContent = '0 / 0';
+  pct.textContent = '0%';
+  status.textContent = 'Запуск Full Grid...';
+
+  const methods = [...document.querySelectorAll('.rs-fg-method')]
+    .filter(cb => cb.checked).map(cb => cb.value);
+  if (!methods.length) { status.textContent = 'Выберите хотя бы один метод'; btn.disabled = false; return; }
+
+  const subfolder = document.getElementById('rs-folder').value;
+  const maxImages = parseInt(document.getElementById('rs-maximg').value) || 30;
+
+  const body = {
+    subfolder,
+    max_images:      maxImages,
+    blur_values:     _rsFgParseInts(document.getElementById('rs-fg-blur').value),
+    pct_clip_values: _rsFgParseFloats(document.getElementById('rs-fg-pct').value),
+    vmin_values:     _rsFgParseFloats(document.getElementById('rs-fg-vmin').value),
+    gamma_values:    _rsFgParseFloats(document.getElementById('rs-fg-gamma').value),
+    bin_thr_values:  _rsFgParseFloats(document.getElementById('rs-fg-thr').value),
+    smin_values:     _rsFgParseInts(document.getElementById('rs-fg-smin').value),
+    smax_values:     _rsFgParseInts(document.getElementById('rs-fg-smax').value),
+    use_edge_mask:   document.getElementById('rs-fg-edge-mask').checked,
+    pca_values:      _rsFgParseInts(document.getElementById('rs-fg-pcas').value),
+    methods,
+    max_combinations: parseInt(document.getElementById('rs-fg-maxcomb').value) || 1000,
+    use_cache:        document.getElementById('rs-fg-cache').checked,
+  };
+
+  try {
+    const resp = await fetch(`${API}/research/full_grid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const reader = resp.body.getReader();
+    const dec    = new TextDecoder();
+    let buf = '';
+    let total = 0;
+    let done  = 0;
+
+    while (true) {
+      const { value, done: eof } = await reader.read();
+      if (eof) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === 'start') {
+            total = ev.total;
+            label.textContent = `0 / ${total}`;
+            status.textContent = ev.message || 'Full Grid запущен';
+          } else if (ev.type === 'progress') {
+            status.textContent = ev.message || '';
+          } else if (ev.type === 'result') {
+            done = ev.done;
+            total = ev.total || total;
+            const p = total > 0 ? Math.round(done / total * 100) : 0;
+            bar.style.width = p + '%';
+            label.textContent = `${done} / ${total}`;
+            pct.textContent = p + '%';
+            if (ev.result) _rsFgResults.push(ev.result);
+          } else if (ev.type === 'done') {
+            status.textContent = ev.message || `Завершено: ${ev.done} точек`;
+          } else if (ev.type === 'error') {
+            status.textContent = 'Ошибка: ' + ev.detail;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (_rsFgResults.length > 0) {
+      document.getElementById('rs-fg-section').classList.remove('hidden');
+      rsBuildCrossMatrix();
+      rsFgRenderBestTable();
+    }
+    status.textContent += ` | Собрано ${_rsFgResults.length} точек`;
+  } catch (e) {
+    status.textContent = 'Ошибка сети: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function rsBuildCrossMatrix() {
+  const xparam = document.getElementById('rs-fg-xparam').value;
+  const yparam = document.getElementById('rs-fg-yparam').value;
+  const metric = document.getElementById('rs-fg-metric').value;
+  const feasibleOnly = document.getElementById('rs-fg-feasible-only').checked;
+  const container = document.getElementById('rs-fg-matrix-container');
+
+  const rows = feasibleOnly
+    ? _rsFgResults.filter(r => r.metrics && r.metrics.feasible)
+    : _rsFgResults.filter(r => r.metrics);
+
+  if (!rows.length) {
+    container.innerHTML = '<p style="color:var(--muted);font-size:0.8rem">Нет данных. Запустите Full Grid.</p>';
+    return;
+  }
+
+  const xvals = [...new Set(rows.map(r => r.params[xparam]))].sort((a,b) => String(a).localeCompare(String(b), undefined, {numeric:true}));
+  const yvals = [...new Set(rows.map(r => r.params[yparam]))].sort((a,b) => String(a).localeCompare(String(b), undefined, {numeric:true}));
+
+  if (xvals.length <= 1 && yvals.length <= 1) {
+    container.innerHTML = '<p style="color:var(--muted);font-size:0.8rem">Слишком мало уникальных значений для выбранных параметров.</p>';
+    return;
+  }
+
+  // Accumulate metric values per (x, y) cell
+  const acc = {};
+  const cnt = {};
+  for (const r of rows) {
+    const x = r.params[xparam];
+    const y = r.params[yparam];
+    const v = r.metrics[metric];
+    if (v === null || v === undefined) continue;
+    const k = `${x}||${y}`;
+    acc[k] = (acc[k] || 0) + v;
+    cnt[k] = (cnt[k] || 0) + 1;
+  }
+
+  const cells = {};
+  for (const k of Object.keys(acc)) cells[k] = acc[k] / cnt[k];
+
+  const allVals = Object.values(cells);
+  const vmin = Math.min(...allVals);
+  const vmax = Math.max(...allVals);
+  const lowerIsBetter = metric === 'fp_rate';
+
+  function cellColor(v) {
+    if (v === undefined) return 'var(--border)';
+    const t = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5;
+    const tt = lowerIsBetter ? 1 - t : t;
+    const r = Math.round(200 * (1 - tt));
+    const g = Math.round(180 * tt);
+    return `rgb(${r},${g},40)`;
+  }
+  function cellText(v) {
+    if (v === undefined) return '—';
+    if (metric === 'fp_rate') return (v * 100).toFixed(1) + '%';
+    return (v * 100).toFixed(1) + '%';
+  }
+
+  const metricLabels = {
+    clf_accuracy: 'Точность классификации',
+    detection_recall: 'Recall детекции',
+    fp_rate: 'FP rate',
+    combined_score: 'Combined score',
+  };
+  const paramLabels = {
+    blur_kernel: 'Blur', percentile_clip: 'Pct clip', vmin_floor: 'vmin',
+    gamma: 'Gamma', binary_threshold: 'Threshold', s_min: 'S_min', s_max: 'S_max',
+    pca_n: 'PCA n', method: 'Метод',
+  };
+
+  let html = `<div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px">
+    ${metricLabels[metric] || metric} | ${feasibleOnly ? 'только FP=0' : 'все точки'} | ${rows.length} точек
+  </div>`;
+  html += `<table style="border-collapse:collapse;font-size:0.8rem">`;
+  html += `<tr>
+    <th style="padding:6px 10px;background:var(--border);white-space:nowrap">${paramLabels[yparam]||yparam} \\ ${paramLabels[xparam]||xparam}</th>`;
+  for (const x of xvals) {
+    html += `<th style="padding:6px 10px;background:var(--border);text-align:center">${x}</th>`;
+  }
+  html += '</tr>';
+
+  for (const y of yvals) {
+    html += `<tr><th style="padding:6px 10px;background:var(--border);white-space:nowrap;text-align:left">${y}</th>`;
+    for (const x of xvals) {
+      const k = `${x}||${y}`;
+      const v = cells[k];
+      const n = cnt[k] || 0;
+      const bg = cellColor(v);
+      const txtColor = v !== undefined ? '#fff' : 'var(--muted)';
+      html += `<td style="padding:6px 12px;text-align:center;background:${bg};color:${txtColor};cursor:default"
+                   title="${n} точек">${cellText(v)}<br><small style="opacity:0.7">(${n})</small></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  html += `<div style="font-size:0.72rem;color:var(--muted);margin-top:6px">
+    Подсказка: число в скобках = количество точек. ${lowerIsBetter ? 'Зелёный = меньше (лучше).' : 'Зелёный = больше (лучше).'}
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+function rsFgRenderBestTable() {
+  const wrap  = document.getElementById('rs-fg-best-wrap');
+  const table = document.getElementById('rs-fg-best-table');
+
+  const feasible = _rsFgResults.filter(r => r.metrics && r.metrics.feasible);
+  const sorted = feasible
+    .slice()
+    .sort((a, b) => (b.metrics.clf_accuracy || 0) - (a.metrics.clf_accuracy || 0))
+    .slice(0, 10);
+
+  if (!sorted.length) { wrap.classList.add('hidden'); return; }
+
+  const cols = [
+    ['Blur', r => r.params.blur_kernel],
+    ['Pct', r => r.params.percentile_clip],
+    ['vmin', r => r.params.vmin_floor],
+    ['γ', r => r.params.gamma],
+    ['Thr', r => r.params.binary_threshold],
+    ['S_min', r => r.params.s_min],
+    ['PCA', r => r.params.pca_n],
+    ['Метод', r => r.params.method],
+    ['Recall', r => r.metrics.detection_recall != null ? (r.metrics.detection_recall*100).toFixed(1)+'%' : '—'],
+    ['FP', r => r.metrics.fp_count],
+    ['Clf Acc', r => r.metrics.clf_accuracy != null ? (r.metrics.clf_accuracy*100).toFixed(1)+'%' : '—'],
+  ];
+
+  let html = `<thead><tr style="background:var(--border)">`;
+  for (const [h] of cols) html += `<th style="padding:5px 8px;white-space:nowrap">${h}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const r of sorted) {
+    html += '<tr style="border-bottom:1px solid var(--border)">';
+    for (const [, fn] of cols) html += `<td style="padding:5px 8px;text-align:center">${fn(r)}</td>`;
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  table.innerHTML = html;
+  wrap.classList.remove('hidden');
+}
+
+// Подключаем события Research вкладки в bindEvents
+function _bindResearchEvents() {
+  const runBtn = document.getElementById('rs-run-btn');
+  if (runBtn) runBtn.addEventListener('click', rsRunGridSearch);
+
+  const stabBtn = document.getElementById('rs-stab-btn');
+  if (stabBtn) stabBtn.addEventListener('click', rsCheckStability);
+
+  const cacheBtn = document.getElementById('rs-clear-cache-btn');
+  if (cacheBtn) cacheBtn.addEventListener('click', async () => {
+    if (!confirm('Очистить весь кэш grid search?')) return;
+    const res = await fetch(`${API}/research/cache`, {method:'DELETE'});
+    const d = await res.json();
+    document.getElementById('rs-status').textContent = d.message;
+    _rsResults = [];
+  });
+
+  const detectBtn = document.getElementById('rs-detect-btn');
+  if (detectBtn) detectBtn.addEventListener('click', rsRunDetectability);
+
+  const rocBtn = document.getElementById('rs-roc-btn');
+  if (rocBtn) rocBtn.addEventListener('click', rsRunRecallFpr);
+
+  const expBtn = document.getElementById('rs-export-btn');
+  if (expBtn) expBtn.addEventListener('click', rsExportCSV);
+
+  const expJsonBtn = document.getElementById('rs-export-json-btn');
+  if (expJsonBtn) expJsonBtn.addEventListener('click', rsExportJSON);
+
+  const fgRunBtn = document.getElementById('rs-fg-run-btn');
+  if (fgRunBtn) fgRunBtn.addEventListener('click', rsFgRunFullGrid);
+
+  const fgClearBtn = document.getElementById('rs-fg-clear-btn');
+  if (fgClearBtn) fgClearBtn.addEventListener('click', async () => {
+    if (!confirm('Очистить кэш Full Grid?')) return;
+    const res = await fetch(`${API}/research/full_grid/cache`, { method: 'DELETE' });
+    const d = await res.json();
+    document.getElementById('rs-fg-status').textContent = d.message;
+    _rsFgResults = [];
+    document.getElementById('rs-fg-section').classList.add('hidden');
+  });
+
+  const fgMatrixBtn = document.getElementById('rs-fg-matrix-btn');
+  if (fgMatrixBtn) fgMatrixBtn.addEventListener('click', rsBuildCrossMatrix);
+
+  // Load cached full_grid results on page open
+  fetch(`${API}/research/full_grid/results`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.results && d.results.length > 0) {
+        _rsFgResults = d.results;
+        document.getElementById('rs-fg-section').classList.remove('hidden');
+        rsBuildCrossMatrix();
+        rsFgRenderBestTable();
+        document.getElementById('rs-fg-status').textContent =
+          `Загружено ${d.n} кэшированных точек`;
+      }
+    })
+    .catch(() => {});
+}
+
 init();
 </script>
+
+<!-- ══════════════ TAB: LIVE КАЛИБРОВКА HEATMAP ══════════════ -->
+<div class="tab-pane" id="tab-live_calib">
+<style>
+/* ── Live Calibration styles ── */
+.lc-layout { display:grid; grid-template-columns:270px 1fr; min-height:calc(100vh - 120px); }
+.lc-sidebar { background:var(--light); border-right:1.5px solid var(--border); padding:14px 13px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; }
+.lc-main { padding:14px 16px; overflow-y:auto; display:flex; flex-direction:column; gap:14px; }
+
+.lc-param-row { display:flex; flex-direction:column; gap:3px; margin-bottom:9px; }
+.lc-param-row label { font-size:0.72rem; font-weight:700; color:var(--muted); }
+.lc-param-row input[type=range] { width:100%; cursor:pointer; accent-color:var(--acc); }
+.lc-param-row .lc-val { font-size:0.75rem; font-weight:800; color:var(--text); }
+
+.lc-fp-warning {
+  background:#fff0f0; border:2px solid #e53935; padding:10px 12px;
+  font-size:0.75rem; font-weight:700; color:#b71c1c; line-height:1.4;
+}
+.lc-save-btn { width:100%; }
+.lc-save-btn:disabled { opacity:0.45; cursor:not-allowed; }
+
+/* Cards grid */
+.lc-cards-grid {
+  display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;
+}
+@media (max-width:1100px) { .lc-cards-grid { grid-template-columns:repeat(2,1fr); } }
+
+.lc-card {
+  border:1.5px solid var(--border); background:var(--surf); padding:0;
+  overflow:hidden;
+}
+.lc-card-header {
+  padding:7px 10px; display:flex; align-items:center; justify-content:space-between;
+  font-size:0.72rem; font-weight:800; letter-spacing:1px; text-transform:uppercase;
+  border-bottom:1.5px solid var(--border);
+}
+.lc-card-ok   { border-color:#43a047; }
+.lc-card-ok .lc-card-header   { background:#f1f8e9; }
+.lc-card-fp   { border-color:#e53935; border-width:2.5px; }
+.lc-card-fp .lc-card-header   { background:#fff0f0; }
+.lc-card-miss { border-color:#ff8f00; }
+.lc-card-miss .lc-card-header { background:#fff8e1; }
+
+.lc-verdict-ok   { color:#2e7d32; font-weight:800; }
+.lc-verdict-fp   { color:#c62828; font-weight:900; }
+.lc-verdict-miss { color:#e65100; font-weight:800; }
+
+.lc-images { display:flex; gap:0; border-bottom:1px solid var(--border); }
+.lc-images img { width:33.33%; aspect-ratio:1; object-fit:contain; background:#111; display:block; cursor:zoom-in; }
+.lc-images img:not(:last-child) { border-right:1px solid var(--border); }
+.lc-card-info { padding:6px 10px; font-size:0.68rem; color:var(--muted); line-height:1.5; }
+.lc-badge-fp { font-size:0.65rem; background:#e53935; color:#fff; padding:1px 5px; margin-left:4px; font-weight:700; }
+.lc-badge-miss { font-size:0.65rem; background:#ff8f00; color:#fff; padding:1px 5px; margin-left:4px; font-weight:700; }
+
+/* Summary table */
+.lc-summary-tbl { width:100%; border-collapse:collapse; font-size:0.76rem; }
+.lc-summary-tbl th { background:var(--text); color:#fff; padding:7px 10px; text-align:left; font-size:0.65rem; letter-spacing:1px; text-transform:uppercase; }
+.lc-summary-tbl td { padding:7px 10px; border-bottom:1px solid var(--border); }
+.lc-summary-tbl tr:hover td { background:var(--light); }
+
+/* Auto-calibration */
+.lc-auto-block { border:1.5px solid var(--border); }
+.lc-auto-header { padding:10px 14px; background:var(--text); color:var(--acc); font-size:0.65rem; font-weight:800; letter-spacing:2px; text-transform:uppercase; }
+.lc-auto-body { padding:14px; display:flex; flex-direction:column; gap:10px; }
+.lc-progress-bar-wrap { background:#e0e0e0; height:8px; width:100%; }
+.lc-progress-bar { height:8px; background:var(--acc); transition:width 0.3s; }
+.lc-iou-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+.lc-iou-chip {
+  font-size:0.68rem; font-weight:700; padding:3px 8px;
+  border:1.5px solid var(--border); background:var(--light);
+}
+.lc-iou-chip.good  { background:#f1f8e9; border-color:#43a047; }
+.lc-iou-chip.zero  { background:#fff8e1; border-color:#ff8f00; }
+.lc-undetect-warn  { font-size:0.73rem; color:#b71c1c; background:#fff0f0; border:1.5px solid #e53935; padding:9px 12px; line-height:1.5; }
+.lc-param-compare  { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px; }
+.lc-param-box { background:var(--light); border:1.5px solid var(--border); padding:10px 12px; font-size:0.72rem; }
+.lc-param-box b { display:block; font-size:0.6rem; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin-bottom:5px; }
+.lc-param-box .lc-param-line { display:flex; justify-content:space-between; margin:2px 0; }
+
+/* Noise suppression controls */
+.lc-noise-section { border-top:1px solid var(--border); margin-top:8px; padding-top:8px; }
+.lc-noise-check-row { display:flex; align-items:center; gap:7px; font-size:0.72rem; margin-bottom:4px; }
+.lc-noise-check-row label { color:var(--muted); font-weight:600; cursor:pointer; }
+.lc-noise-sub { padding-left:22px; display:flex; flex-direction:column; gap:4px; }
+.lc-baseline-status { font-size:0.68rem; padding:3px 0; }
+
+/* Comparison mode: 4 images per card */
+.lc-compare-hdr { display:flex; font-size:0.56rem; font-weight:700; letter-spacing:0.5px; color:var(--muted); border-bottom:1px solid var(--border); }
+.lc-compare-hdr span { flex:1; text-align:center; padding:2px 0; border-right:1px solid var(--border); }
+.lc-compare-hdr span:last-child { border-right:0; }
+.lc-compare-hdr .lc-cmp-after { color:#1976d2; }
+.lc-images-cmp img { width:25%; aspect-ratio:1; object-fit:contain; background:#111; display:block; cursor:zoom-in; }
+.lc-images-cmp img:not(:last-child) { border-right:1px solid var(--border); }
+</style>
+
+<div class="lc-layout">
+  <!-- ── Sidebar ── -->
+  <aside class="lc-sidebar">
+    <div class="card">
+      <div class="card-title">Предобработка карты аномалий</div>
+      <div class="lc-param-row">
+        <label>Сглаживание (blur): <span class="lc-val" id="lc-blur-val">выкл</span></label>
+        <input type="range" id="lc-blur" min="0" max="4" step="1" value="0"
+               title="0=выкл, 1=3×3, 2=5×5, 3=7×7, 4=9×9">
+        <small style="font-size:0.65rem;color:var(--muted)">Gaussian blur подавляет зернистый шум перед нормализацией</small>
+      </div>
+      <div class="lc-param-row">
+        <label>Адаптивный клип (percentile): <span class="lc-val" id="lc-pct-val">95</span>%</label>
+        <input type="range" id="lc-pct" min="90" max="99" step="1" value="95"
+               title="95 = нормировать в [5-й; 95-й] перцентиль. Ниже — агрессивнее подавляет шум">
+        <small style="font-size:0.65rem;color:var(--muted)">Per-image адаптивная нормализация вместо глобального min/max</small>
+      </div>
+
+      <!-- ── Baseline subtraction ── -->
+      <div class="lc-noise-section">
+        <div class="lc-noise-check-row">
+          <input type="checkbox" id="lc-baseline-sub">
+          <label for="lc-baseline-sub">Baseline subtraction (вычитание шума)</label>
+        </div>
+        <div id="lc-baseline-controls" style="display:none">
+          <div class="lc-noise-sub">
+            <div class="lc-param-row" style="margin-bottom:4px">
+              <label>Alpha (сила вычитания): <span class="lc-val" id="lc-alpha-val">1.0</span></label>
+              <input type="range" id="lc-alpha" min="0" max="3.0" step="0.1" value="1.0"
+                     title="1.0 = полное вычитание, 0.5 = половинное, 1.5 = агрессивное">
+              <small style="font-size:0.65rem;color:var(--muted)">0 = выкл · 1.0 = полное · >1 = агрессивное</small>
+            </div>
+            <div id="lc-baseline-status" class="lc-baseline-status" style="color:var(--muted)">Baseline: не построен</div>
+            <button class="btn" id="lc-build-baseline-btn"
+              style="width:100%; background:var(--light); border:1.5px solid var(--border); font-size:0.71rem; padding:5px 8px;">
+              📊 Построить baseline по good-кадрам
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Component suppression ── -->
+      <div class="lc-noise-section">
+        <div class="lc-noise-check-row">
+          <input type="checkbox" id="lc-comp-sup">
+          <label for="lc-comp-sup">Мягкое подавление мелких контуров</label>
+        </div>
+        <div id="lc-comp-controls" style="display:none">
+          <div class="lc-noise-sub">
+            <div class="lc-param-row" style="margin-bottom:4px">
+              <label>Порог area: <span class="lc-val" id="lc-comp-area-val">100</span> px²</label>
+              <input type="range" id="lc-comp-area" min="10" max="500" step="10" value="100"
+                     title="Контуры МЕНЬШЕ этого порога будут ослаблены коэффициентом">
+              <small style="font-size:0.65rem;color:var(--muted)">Контуры меньше порога ослабляются (не удаляются)</small>
+            </div>
+            <div class="lc-param-row" style="margin-bottom:0">
+              <label>Коэффициент: <span class="lc-val" id="lc-sup-factor-val">0.30</span></label>
+              <input type="range" id="lc-sup-factor" min="0.05" max="1.0" step="0.05" value="0.3"
+                     title="0.3 → сигнал <33% порога отфильтруется">
+              <small style="font-size:0.65rem;color:var(--muted)">0.3 = слабые убираются · 0.8 = почти всё остаётся</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Нормализация heatmap</div>
+      <div class="lc-param-row">
+        <label>Подавление фона (vmin_floor): <span class="lc-val" id="lc-vmin-val">0.00</span></label>
+        <input type="range" id="lc-vmin" min="0" max="0.5" step="0.01" value="0.0">
+      </div>
+      <div class="lc-param-row">
+        <label>Усиление пиков (gamma): <span class="lc-val" id="lc-gamma-val">1.0</span></label>
+        <input type="range" id="lc-gamma" min="0.5" max="6.0" step="0.1" value="1.0">
+      </div>
+      <div class="lc-param-row">
+        <label>Порог аномалии (0–100): <span class="lc-val" id="lc-thr-val">20</span></label>
+        <input type="range" id="lc-threshold" min="0" max="100" step="1" value="20">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Фильтр контуров</div>
+      <div class="lc-param-row">
+        <label>S_min (мин. площадь): <span class="lc-val" id="lc-smin-val">40</span> px²</label>
+        <input type="range" id="lc-smin" min="0" max="500" step="5" value="40">
+      </div>
+      <div class="lc-param-row">
+        <label>S_max (макс. площадь): <span class="lc-val" id="lc-smax-val">1 500 000</span> px²</label>
+        <input type="range" id="lc-smax" min="0" max="11" step="1" value="8">
+      </div>
+      <div style="margin-top:6px; font-size:0.72rem; display:flex; align-items:center; gap:7px;">
+        <input type="checkbox" id="lc-edge-mask" checked>
+        <label for="lc-edge-mask" style="color:var(--muted); font-weight:600;">Edge mask (граница кадра)</label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:2px">
+      <div class="card-title">Эталон</div>
+      <div class="lc-param-row">
+        <label>Индекс изображения: <span class="lc-val" id="lc-idx-val">0</span></label>
+        <input type="range" id="lc-imgidx" min="0" max="15" step="1" value="0">
+      </div>
+      <button class="btn btn-primary" id="lc-refresh-btn" style="width:100%;margin-top:6px">
+        Обновить превью
+      </button>
+    </div>
+
+    <div id="lc-fp-warning" class="lc-fp-warning hidden">
+      ⛔ FALSE POSITIVE на good!<br>
+      Текущие параметры недопустимы для продакшена.
+      Сохранение пресета заблокировано.
+    </div>
+
+    <button class="btn btn-primary lc-save-btn" id="lc-save-btn">
+      💾 Сохранить пресет
+    </button>
+
+    <div id="lc-preset-msg" class="hidden" style="font-size:0.72rem; color:#2e7d32; font-weight:700; padding:4px 0;"></div>
+
+    <div class="card" style="margin-top:4px">
+      <div class="card-title">Автокалибровка</div>
+      <div class="lc-param-row">
+        <label>Эталонов на класс: <span class="lc-val" id="lc-ncalib-val">5</span></label>
+        <input type="range" id="lc-ncalib" min="2" max="10" step="1" value="5">
+      </div>
+      <div class="lc-param-row">
+        <label>Good эталонов: <span class="lc-val" id="lc-ngood-val">10</span></label>
+        <input type="range" id="lc-ngood" min="5" max="20" step="1" value="10">
+      </div>
+      <button class="btn" id="lc-auto-btn"
+        style="width:100%; background:var(--acc); color:var(--text); font-weight:800;">
+        🎯 Запустить автокалибровку
+      </button>
+      <button class="btn" id="lc-cache-clear-btn"
+        style="width:100%; margin-top:6px; background:var(--light); border:1.5px solid var(--border);">
+        🗑 Очистить кэш инференса
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main class="lc-main">
+    <!-- Status bar -->
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <span style="font-size:0.6rem; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:var(--muted);">
+        Live Калибровка Heatmap
+      </span>
+      <span class="status-line" id="lc-status">Загрузка...</span>
+      <div id="lc-spinner" class="hidden" style="width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--acc);border-radius:50%;animation:spin 0.7s linear infinite;"></div>
+      <span id="lc-timing" style="font-size:0.7rem; color:var(--muted);"></span>
+    </div>
+
+    <!-- 6 image cards -->
+    <div id="lc-cards" class="lc-cards-grid"></div>
+
+    <!-- Summary table -->
+    <div class="card" id="lc-summary-block" style="display:none">
+      <div class="card-title">Сводка по классам</div>
+      <table class="lc-summary-tbl">
+        <thead>
+          <tr>
+            <th>Класс</th>
+            <th>Вердикт</th>
+            <th>Score p95</th>
+            <th>Контуров</th>
+            <th>Мин. площадь</th>
+            <th>Макс. площадь</th>
+            <th>Статус</th>
+          </tr>
+        </thead>
+        <tbody id="lc-summary-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Auto-calibration block -->
+    <div class="lc-auto-block" id="lc-auto-block">
+      <div class="lc-auto-header">Автокалибровка (Grid Search, FP=0 ограничение)</div>
+      <div class="lc-auto-body" id="lc-auto-body">
+        <div style="font-size:0.78rem; color:var(--muted); line-height:1.5">
+          Нажмите «Запустить автокалибровку» для поиска оптимальных параметров.
+          Жёсткое ограничение: любая конфигурация с FP>0 на good-изображениях
+          автоматически исключается из рассмотрения.
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</div><!-- end tab-live_calib -->
+
+<script>
+// ── Live Calibration JS ───────────────────────────────────────────────────────
+
+// Log-scale steps for S_max slider (index 0-11)
+const LC_SMAX_STEPS = [100, 500, 1000, 2000, 5000, 10000, 50000, 100000, 300000, 600000, 1500000, 3000000];
+// Discrete steps for blur kernel slider (index 0-4)
+const LC_BLUR_STEPS = [0, 3, 5, 7, 9];
+const LC_BLUR_LABELS = ['выкл', '3×3', '5×5', '7×7', '9×9'];
+const LC_CLASS_ORDER = ['good', 'color', 'cut', 'hole', 'metal_contamination', 'thread'];
+const LC_CLASS_LABEL = {
+  good: 'Good', color: 'Color', cut: 'Cut',
+  hole: 'Hole', metal_contamination: 'Metal', thread: 'Thread'
+};
+const LC_CLASS_ICON = {
+  good: '✓', color: '🎨', cut: '✂', hole: '⚫', metal_contamination: '🔩', thread: '🧵'
+};
+
+let _lcDebounce       = null;
+let _lcHasFP          = false;
+let _lcAutoPoller     = null;
+let _lcLastResult     = null;
+let _lcNoiseSnapshots = null;   // {cls: overlay_b64} captured WITHOUT noise suppression (for "До" column)
+let _lcPresets        = JSON.parse(localStorage.getItem('lc_presets') || '[]');
+
+function _lcFmt(n) {
+  if (n === undefined || n === null) return '—';
+  return n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + ' M'
+       : n >= 1_000     ? (n / 1_000).toFixed(0) + ' K'
+       : String(n);
+}
+
+// ─── Slider binding ───────────────────────────────────────────────────────────
+function _lcBindSliders() {
+  const vminEl  = document.getElementById('lc-vmin');
+  const gammaEl = document.getElementById('lc-gamma');
+  const thrEl   = document.getElementById('lc-threshold');
+  const sminEl  = document.getElementById('lc-smin');
+  const smaxEl  = document.getElementById('lc-smax');
+  const blurEl  = document.getElementById('lc-blur');
+  const pctEl   = document.getElementById('lc-pct');
+  const idxEl   = document.getElementById('lc-imgidx');
+  const edgeEl  = document.getElementById('lc-edge-mask');
+
+  function syncVal(el, valId, fmt) {
+    const v = parseFloat(el.value);
+    document.getElementById(valId).textContent = fmt ? fmt(v) : v;
+  }
+
+  vminEl.addEventListener('input', () => {
+    syncVal(vminEl, 'lc-vmin-val', v => v.toFixed(2));
+    _lcSchedule();
+  });
+  gammaEl.addEventListener('input', () => {
+    syncVal(gammaEl, 'lc-gamma-val', v => v.toFixed(1));
+    _lcSchedule();
+  });
+  thrEl.addEventListener('input', () => {
+    syncVal(thrEl, 'lc-thr-val', v => Math.round(v));
+    _lcSchedule();
+  });
+  sminEl.addEventListener('input', () => {
+    syncVal(sminEl, 'lc-smin-val', v => Math.round(v));
+    _lcSchedule();
+  });
+  smaxEl.addEventListener('input', () => {
+    const v = LC_SMAX_STEPS[parseInt(smaxEl.value)];
+    document.getElementById('lc-smax-val').textContent = _lcFmt(v);
+    _lcSchedule();
+  });
+  blurEl.addEventListener('input', () => {
+    const idx = parseInt(blurEl.value);
+    document.getElementById('lc-blur-val').textContent = LC_BLUR_LABELS[idx];
+    _lcSchedule();
+  });
+  pctEl.addEventListener('input', () => {
+    syncVal(pctEl, 'lc-pct-val', v => Math.round(v));
+    _lcSchedule();
+  });
+  idxEl.addEventListener('input', () => {
+    syncVal(idxEl, 'lc-idx-val', v => Math.round(v));
+  });
+  edgeEl.addEventListener('change', _lcSchedule);
+
+  document.getElementById('lc-ncalib').addEventListener('input', e =>
+    document.getElementById('lc-ncalib-val').textContent = e.target.value);
+  document.getElementById('lc-ngood').addEventListener('input', e =>
+    document.getElementById('lc-ngood-val').textContent = e.target.value);
+
+  // Noise suppression controls
+  const baselineEl   = document.getElementById('lc-baseline-sub');
+  const compSupEl    = document.getElementById('lc-comp-sup');
+  const alphaEl      = document.getElementById('lc-alpha');
+  const compAreaEl   = document.getElementById('lc-comp-area');
+  const supFactorEl  = document.getElementById('lc-sup-factor');
+
+  baselineEl.addEventListener('change', async () => {
+    document.getElementById('lc-baseline-controls').style.display = baselineEl.checked ? '' : 'none';
+    if (baselineEl.checked) {
+      await _lcCaptureBeforeSnapshot();
+    } else {
+      _lcNoiseSnapshots = null;
+    }
+    _lcSchedule();
+  });
+  compSupEl.addEventListener('change', async () => {
+    document.getElementById('lc-comp-controls').style.display = compSupEl.checked ? '' : 'none';
+    if (compSupEl.checked && !_lcNoiseSnapshots) await _lcCaptureBeforeSnapshot();
+    _lcSchedule();
+  });
+  alphaEl.addEventListener('input', () => {
+    syncVal(alphaEl, 'lc-alpha-val', v => v.toFixed(1));
+    _lcSchedule();
+  });
+  compAreaEl.addEventListener('input', () => {
+    syncVal(compAreaEl, 'lc-comp-area-val', v => Math.round(v));
+    _lcSchedule();
+  });
+  supFactorEl.addEventListener('input', () => {
+    syncVal(supFactorEl, 'lc-sup-factor-val', v => v.toFixed(2));
+    _lcSchedule();
+  });
+
+  document.getElementById('lc-build-baseline-btn').addEventListener('click', lcBuildBaseline);
+  document.getElementById('lc-refresh-btn').addEventListener('click', lcRunCalibrate);
+  document.getElementById('lc-auto-btn').addEventListener('click', lcRunAutoCalibrate);
+  document.getElementById('lc-cache-clear-btn').addEventListener('click', lcClearCache);
+  document.getElementById('lc-save-btn').addEventListener('click', lcSavePreset);
+}
+
+function _lcGetParams() {
+  const smaxIdx    = parseInt(document.getElementById('lc-smax').value);
+  const blurIdx    = parseInt(document.getElementById('lc-blur').value);
+  const baselineOn = document.getElementById('lc-baseline-sub')?.checked ?? false;
+  const compSupOn  = document.getElementById('lc-comp-sup')?.checked ?? false;
+  return {
+    vmin_floor:                parseFloat(document.getElementById('lc-vmin').value),
+    gamma:                     parseFloat(document.getElementById('lc-gamma').value),
+    binary_threshold:          parseInt(document.getElementById('lc-threshold').value),
+    s_min:                     parseInt(document.getElementById('lc-smin').value),
+    s_max:                     LC_SMAX_STEPS[smaxIdx],
+    use_edge_mask:             document.getElementById('lc-edge-mask').checked,
+    k_morph:                   5,
+    blur_kernel:               LC_BLUR_STEPS[blurIdx],
+    percentile_clip:           parseFloat(document.getElementById('lc-pct').value),
+    img_idx:                   parseInt(document.getElementById('lc-imgidx').value),
+    use_baseline_subtraction:  baselineOn,
+    baseline_alpha:            baselineOn ? parseFloat(document.getElementById('lc-alpha').value) : 1.0,
+    use_component_suppression: compSupOn,
+    suppression_factor:        compSupOn ? parseFloat(document.getElementById('lc-sup-factor').value) : 0.3,
+    min_component_area:        compSupOn ? parseInt(document.getElementById('lc-comp-area').value) : 0,
+  };
+}
+
+function _lcApplyParams(p) {
+  document.getElementById('lc-vmin').value      = p.vmin_floor ?? 0;
+  document.getElementById('lc-vmin-val').textContent = (p.vmin_floor ?? 0).toFixed(2);
+  document.getElementById('lc-gamma').value     = p.gamma ?? 1.0;
+  document.getElementById('lc-gamma-val').textContent = (p.gamma ?? 1.0).toFixed(1);
+  document.getElementById('lc-threshold').value = p.binary_threshold ?? 20;
+  document.getElementById('lc-thr-val').textContent  = p.binary_threshold ?? 20;
+  document.getElementById('lc-smin').value      = p.s_min ?? 40;
+  document.getElementById('lc-smin-val').textContent = p.s_min ?? 40;
+  // Find closest S_max step
+  const smax = p.s_max ?? 1500000;
+  let smaxIdx = 0;
+  LC_SMAX_STEPS.forEach((v, i) => { if (Math.abs(v - smax) < Math.abs(LC_SMAX_STEPS[smaxIdx] - smax)) smaxIdx = i; });
+  document.getElementById('lc-smax').value = smaxIdx;
+  document.getElementById('lc-smax-val').textContent = _lcFmt(LC_SMAX_STEPS[smaxIdx]);
+  // Find closest blur step
+  const blurKernel = p.blur_kernel ?? 0;
+  let blurIdx = 0;
+  LC_BLUR_STEPS.forEach((v, i) => { if (Math.abs(v - blurKernel) < Math.abs(LC_BLUR_STEPS[blurIdx] - blurKernel)) blurIdx = i; });
+  document.getElementById('lc-blur').value = blurIdx;
+  document.getElementById('lc-blur-val').textContent = LC_BLUR_LABELS[blurIdx];
+  // Percentile clip
+  if (p.percentile_clip !== undefined) {
+    document.getElementById('lc-pct').value = p.percentile_clip;
+    document.getElementById('lc-pct-val').textContent = Math.round(p.percentile_clip);
+  }
+  if (p.use_edge_mask !== undefined)
+    document.getElementById('lc-edge-mask').checked = p.use_edge_mask;
+  // Noise suppression params
+  if (p.use_baseline_subtraction !== undefined) {
+    const el = document.getElementById('lc-baseline-sub');
+    if (el) { el.checked = !!p.use_baseline_subtraction;
+      document.getElementById('lc-baseline-controls').style.display = el.checked ? '' : 'none'; }
+  }
+  if (p.baseline_alpha !== undefined) {
+    const el = document.getElementById('lc-alpha');
+    if (el) { el.value = p.baseline_alpha;
+      document.getElementById('lc-alpha-val').textContent = Number(p.baseline_alpha).toFixed(1); }
+  }
+  if (p.use_component_suppression !== undefined) {
+    const el = document.getElementById('lc-comp-sup');
+    if (el) { el.checked = !!p.use_component_suppression;
+      document.getElementById('lc-comp-controls').style.display = el.checked ? '' : 'none'; }
+  }
+  if (p.suppression_factor !== undefined) {
+    const el = document.getElementById('lc-sup-factor');
+    if (el) { el.value = p.suppression_factor;
+      document.getElementById('lc-sup-factor-val').textContent = Number(p.suppression_factor).toFixed(2); }
+  }
+  if (p.min_component_area !== undefined) {
+    const el = document.getElementById('lc-comp-area');
+    if (el) { el.value = p.min_component_area;
+      document.getElementById('lc-comp-area-val').textContent = p.min_component_area; }
+  }
+  lcRunCalibrate();
+}
+
+// ─── Schedule debounced calibration ──────────────────────────────────────────
+function _lcSchedule() {
+  console.log('[LC] slider moved → debounce reset');
+  clearTimeout(_lcDebounce);
+  _lcDebounce = setTimeout(() => {
+    console.log('[LC] debounce fired → fetch');
+    lcRunCalibrate();
+  }, 175);
+}
+
+// ─── Main calibration call ───────────────────────────────────────────────────
+async function lcRunCalibrate() {
+  clearTimeout(_lcDebounce);
+  const params = _lcGetParams();
+  console.log('[LC] fetch → /heatmap_calibrate', params);
+  const spinner = document.getElementById('lc-spinner');
+  const statusEl = document.getElementById('lc-status');
+  spinner.classList.remove('hidden');
+  statusEl.textContent = 'Обработка...';
+  const t0 = performance.now();
+
+  try {
+    const res = await fetch(`${API}/heatmap_calibrate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    console.log('[LC] response OK — has_fp=', data.has_fp,
+      '| correct=', data.correct_count, '/', data.total_classes,
+      '| classes:', Object.keys(data.results || {}));
+    _lcLastResult = data;
+
+    const elapsed = Math.round(performance.now() - t0);
+    document.getElementById('lc-timing').textContent = `${elapsed} мс`;
+    statusEl.textContent =
+      `${data.correct_count}/${data.total_classes} верно` +
+      (data.has_fp ? ' | ⚠ FP на good!' : '') +
+      (data.missed_classes?.length ? ` | Пропущено: ${data.missed_classes.join(', ')}` : '');
+
+    lcRenderCards(data);
+    console.log('[LC] DOM cards updated');
+    lcRenderSummary(data);
+    lcUpdateFPWarning(data.has_fp);
+    lcUpdateSaveBtn(data.has_fp);
+  } catch(e) {
+    console.error('[LC] fetch error:', e);
+    statusEl.textContent = `Ошибка: ${e.message}`;
+  } finally {
+    spinner.classList.add('hidden');
+  }
+}
+
+// ─── Render 6 image cards ────────────────────────────────────────────────────
+function lcRenderCards(data) {
+  const grid = document.getElementById('lc-cards');
+  _lcHasFP = data.has_fp;
+
+  grid.innerHTML = LC_CLASS_ORDER.map(cls => {
+    const r = data.results?.[cls];
+    if (!r) return `<div class="lc-card"><div class="lc-card-header">${cls.toUpperCase()} — нет данных</div></div>`;
+    if (r.error) return `<div class="lc-card"><div class="lc-card-header">${cls.toUpperCase()} ❌</div>
+      <div class="lc-card-info">${r.error}</div></div>`;
+
+    const isFP   = cls === 'good' && r.verdict === 'defect';
+    const isMiss = cls !== 'good' && r.verdict === 'ok';
+    const isOk   = !isFP && !isMiss;
+
+    const cardCls = isFP ? 'lc-card-fp' : isMiss ? 'lc-card-miss' : 'lc-card-ok';
+    const verdLabel = isFP
+      ? `<span class="lc-verdict-fp">⛔ FP</span><span class="lc-badge-fp">FALSE POSITIVE</span>`
+      : isMiss
+      ? `<span class="lc-verdict-miss">✗ Пропущен<span class="lc-badge-miss">NOT DETECTED</span></span>`
+      : `<span class="lc-verdict-ok">✓ OK</span>`;
+
+    const areas = r.contour_areas?.length
+      ? r.contour_areas.slice(0, 3).map(_lcFmt).join(', ') + ' px²'
+      : '—';
+
+    const noiseOn   = (document.getElementById('lc-baseline-sub')?.checked || document.getElementById('lc-comp-sup')?.checked);
+    const snapBefore = _lcNoiseSnapshots?.[cls];
+    const showCompare = noiseOn && snapBefore;
+
+    const imagesHtml = showCompare
+      ? `<div class="lc-compare-hdr">
+           <span>ОРИГИНАЛ</span>
+           <span>ДО</span>
+           <span class="lc-cmp-after">ПОСЛЕ</span>
+           <span>МАСКА</span>
+         </div>
+         <div class="lc-images lc-images-cmp">
+           <img src="data:image/jpeg;base64,${r.original_b64}" title="Оригинал">
+           <img src="data:image/jpeg;base64,${snapBefore}" title="Heatmap до шумодава">
+           <img src="data:image/jpeg;base64,${r.overlay_b64}" title="Heatmap после шумодава">
+           <img src="data:image/jpeg;base64,${r.binary_b64}" title="Бинарная маска">
+         </div>`
+      : `<div class="lc-images">
+           <img src="data:image/jpeg;base64,${r.original_b64}" title="Оригинал">
+           <img src="data:image/jpeg;base64,${r.overlay_b64}" title="Heatmap overlay">
+           <img src="data:image/jpeg;base64,${r.binary_b64}" title="Бинарная маска">
+         </div>`;
+
+    return `<div class="lc-card ${cardCls}">
+      <div class="lc-card-header">
+        <span>${LC_CLASS_ICON[cls] || ''} ${LC_CLASS_LABEL[cls] || cls}</span>
+        ${verdLabel}
+      </div>
+      ${imagesHtml}
+      <div class="lc-card-info">
+        Score p95: <b>${r.anomaly_score}</b> &nbsp;|&nbsp;
+        Контуров: <b>${r.contour_count}</b><br>
+        ${r.contour_count ? `Площади: ${areas}` : 'Детекций нет'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Summary table ────────────────────────────────────────────────────────────
+function lcRenderSummary(data) {
+  const block = document.getElementById('lc-summary-block');
+  const tbody = document.getElementById('lc-summary-tbody');
+  if (!data.results) { block.style.display = 'none'; return; }
+  block.style.display = '';
+
+  tbody.innerHTML = LC_CLASS_ORDER.map(cls => {
+    const r = data.results[cls];
+    if (!r || r.error) return `<tr><td>${cls}</td><td colspan="6">—</td></tr>`;
+
+    const isFP   = cls === 'good' && r.verdict === 'defect';
+    const isMiss = cls !== 'good' && r.verdict === 'ok';
+    const statusText = isFP   ? '<span style="color:#c62828;font-weight:800">⛔ FP</span>'
+                     : isMiss ? '<span style="color:#e65100;font-weight:700">✗ Не обнаружен</span>'
+                     :          '<span style="color:#2e7d32;font-weight:700">✓ OK</span>';
+    const areas = r.contour_areas || [];
+    const minA  = areas.length ? _lcFmt(areas[areas.length - 1]) : '—';
+    const maxA  = areas.length ? _lcFmt(areas[0])               : '—';
+
+    return `<tr>
+      <td><b>${LC_CLASS_LABEL[cls] || cls}</b></td>
+      <td>${r.verdict}</td>
+      <td>${r.anomaly_score}</td>
+      <td>${r.contour_count}</td>
+      <td>${minA}</td>
+      <td>${maxA}</td>
+      <td>${statusText}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── FP warning + save button ─────────────────────────────────────────────────
+function lcUpdateFPWarning(hasFP) {
+  document.getElementById('lc-fp-warning').classList.toggle('hidden', !hasFP);
+}
+function lcUpdateSaveBtn(hasFP) {
+  console.log('[LC] save button: hasFP=', hasFP, '→', hasFP ? 'BLOCKED' : 'enabled');
+  document.getElementById('lc-save-btn').disabled = hasFP;
+}
+
+function lcSavePreset() {
+  if (_lcHasFP) return;
+  const params = _lcGetParams();
+  const preset = { ts: new Date().toLocaleString('ru'), ...params };
+  _lcPresets.unshift(preset);
+  if (_lcPresets.length > 10) _lcPresets = _lcPresets.slice(0, 10);
+  localStorage.setItem('lc_presets', JSON.stringify(_lcPresets));
+  const msg = document.getElementById('lc-preset-msg');
+  msg.textContent = `Сохранено ${preset.ts}`;
+  msg.classList.remove('hidden');
+  setTimeout(() => msg.classList.add('hidden'), 3000);
+}
+
+async function lcClearCache() {
+  const res = await fetch(`${API}/heatmap_calibrate/cache`, { method: 'DELETE' });
+  const d = await res.json();
+  document.getElementById('lc-status').textContent =
+    `Кэш очищен (${d.cleared} записей). Следующий запрос потребует инференс.`;
+}
+
+// ─── Auto-calibration ────────────────────────────────────────────────────────
+async function lcRunAutoCalibrate() {
+  const btn = document.getElementById('lc-auto-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Запуск...';
+
+  const body = {
+    n_calib: parseInt(document.getElementById('lc-ncalib').value),
+    n_good:  parseInt(document.getElementById('lc-ngood').value),
+  };
+
+  try {
+    const res = await fetch(`${API}/heatmap_calibrate/auto`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await res.json();
+    if (d.status === 'already_running') {
+      document.getElementById('lc-status').textContent = 'Автокалибровка уже запущена...';
+    }
+    lcRenderAutoProgress(0, 1, 'Старт...');
+    if (_lcAutoPoller) clearInterval(_lcAutoPoller);
+    _lcAutoPoller = setInterval(lcPollAutoStatus, 800);
+  } catch(e) {
+    document.getElementById('lc-status').textContent = `Ошибка: ${e.message}`;
+    btn.disabled = false;
+    btn.textContent = '🎯 Запустить автокалибровку';
+  }
+}
+
+async function lcPollAutoStatus() {
+  try {
+    const res = await fetch(`${API}/heatmap_calibrate/auto/status`);
+    const d = await res.json();
+    lcRenderAutoProgress(d.progress, d.total, d.status);
+    if (!d.running) {
+      clearInterval(_lcAutoPoller);
+      _lcAutoPoller = null;
+      const btn = document.getElementById('lc-auto-btn');
+      btn.disabled = false;
+      btn.textContent = '🎯 Запустить автокалибровку';
+      if (d.result) lcRenderAutoResult(d.result, d.best_params, d.best_score);
+    }
+  } catch(e) {
+    clearInterval(_lcAutoPoller);
+    _lcAutoPoller = null;
+  }
+}
+
+function lcRenderAutoProgress(progress, total, statusMsg) {
+  const pct = total > 0 ? Math.round(100 * progress / total) : 0;
+  const body = document.getElementById('lc-auto-body');
+  body.innerHTML = `
+    <div style="font-size:0.75rem; color:var(--muted)">${statusMsg || ''}</div>
+    <div class="lc-progress-bar-wrap">
+      <div class="lc-progress-bar" style="width:${pct}%"></div>
+    </div>
+    <div style="font-size:0.7rem; color:var(--muted)">${progress} / ${total || '?'} (${pct}%)</div>`;
+}
+
+function lcRenderAutoResult(result, bestParams, bestScore) {
+  const body = document.getElementById('lc-auto-body');
+
+  if (!result.success) {
+    body.innerHTML = `
+      <div class="lc-fp-warning">${result.error || 'Ошибка автокалибровки'}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">
+        Feasible конфигураций: ${result.feasible_count ?? 0} / ${result.total ?? '?'}
+      </div>`;
+    return;
+  }
+
+  // IoU chips per class
+  const iouHtml = Object.entries(result.per_class_iou || {}).map(([cls, iou]) => {
+    const pct = Math.round(iou * 100);
+    const clsName = LC_CLASS_LABEL[cls] || cls;
+    return `<span class="lc-iou-chip ${pct > 0 ? 'good' : 'zero'}">${clsName}: ${pct}% IoU</span>`;
+  }).join('');
+
+  // Undetected classes warning
+  const undetHtml = (result.undetected_messages || []).length
+    ? `<div class="lc-undetect-warn">
+        <b>Классы, не детектируемые при FP=0%:</b><br>
+        ${result.undetected_messages.map(m => `• ${m}`).join('<br>')}
+       </div>`
+    : '';
+
+  // Parameter comparison
+  const curP = _lcGetParams();
+  const bp   = bestParams || {};
+  const smaxIdx = parseInt(document.getElementById('lc-smax').value);
+  const curSmax = LC_SMAX_STEPS[smaxIdx];
+
+  const noiseRow = (label, val) =>
+    `<div class="lc-param-line"><span>${label}</span><span>${val}</span></div>`;
+
+  const compareHtml = bestParams ? `
+    <div class="lc-param-compare">
+      <div class="lc-param-box">
+        <b>Текущие параметры</b>
+        ${noiseRow('vmin_floor',  curP.vmin_floor.toFixed(2))}
+        ${noiseRow('gamma',       curP.gamma.toFixed(1))}
+        ${noiseRow('threshold',   curP.binary_threshold)}
+        ${noiseRow('s_min',       _lcFmt(curP.s_min))}
+        ${noiseRow('s_max',       _lcFmt(curSmax))}
+        ${noiseRow('blur',        curP.blur_kernel ?? 0)}
+        ${noiseRow('pct_clip',    curP.percentile_clip ?? 95)}
+      </div>
+      <div class="lc-param-box" style="border-color:var(--acc);background:#f9ffe0">
+        <b>Автокалибровка (IoU: ${Math.round(bestScore * 100)}%)</b>
+        ${noiseRow('vmin_floor',  (bp.vmin_floor ?? 0).toFixed(2))}
+        ${noiseRow('gamma',       (bp.gamma ?? 1).toFixed(1))}
+        ${noiseRow('threshold',   bp.binary_threshold ?? '—')}
+        ${noiseRow('s_min',       _lcFmt(bp.s_min))}
+        ${noiseRow('s_max',       _lcFmt(bp.s_max))}
+        ${noiseRow('blur',        bp.blur_kernel ?? 0)}
+        ${noiseRow('pct_clip',    bp.percentile_clip ?? 95)}
+        ${bp.use_baseline_subtraction
+          ? noiseRow('baseline α',   bp.baseline_alpha ?? 1.0)
+          : noiseRow('baseline',     'выкл')}
+        ${bp.use_component_suppression
+          ? noiseRow('sup area',    bp.min_component_area ?? 0) +
+            noiseRow('sup factor',  bp.suppression_factor ?? 0.3)
+          : noiseRow('comp.sup.',   'выкл')}
+      </div>
+    </div>` : '';
+
+  const applyBtn = bestParams
+    ? `<button class="btn btn-primary" onclick="lcApplyAutoParams()" style="margin-top:4px">
+        ✅ Применить параметры автокалибровки
+       </button>`
+    : '';
+
+  body.innerHTML = `
+    <div style="font-size:0.75rem; color:#2e7d32; font-weight:700">
+      ✅ Найдено ${result.feasible_count} feasible конфигураций из ${result.total}.
+      Лучший mean IoU: ${Math.round((bestScore ?? 0) * 100)}%
+    </div>
+    <div class="lc-iou-row">${iouHtml}</div>
+    ${undetHtml}
+    ${compareHtml}
+    ${applyBtn}`;
+
+  // Store best params for apply button
+  window._lcBestAutoParams = bestParams;
+}
+
+function lcApplyAutoParams() {
+  if (!window._lcBestAutoParams) return;
+  _lcApplyParams(window._lcBestAutoParams);
+}
+
+// ─── Capture "before" snapshot for noise comparison ──────────────────────────
+async function _lcCaptureBeforeSnapshot() {
+  // Fetch with suppression completely OFF to get the "before" overlay images.
+  // Called once when user enables noise suppression.
+  const params = _lcGetParams();
+  params.use_baseline_subtraction  = false;
+  params.use_component_suppression = false;
+  params.baseline_alpha            = 1.0;
+  params.suppression_factor        = 0.3;
+  params.min_component_area        = 0;
+  try {
+    const res = await fetch(`${API}/heatmap_calibrate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    _lcNoiseSnapshots = {};
+    for (const cls of LC_CLASS_ORDER) {
+      if (data.results?.[cls]?.overlay_b64)
+        _lcNoiseSnapshots[cls] = data.results[cls].overlay_b64;
+    }
+    console.log('[LC] captured "before" snapshots for', Object.keys(_lcNoiseSnapshots).join(', '));
+  } catch(e) {
+    console.warn('[LC] _lcCaptureBeforeSnapshot failed:', e);
+    _lcNoiseSnapshots = null;
+  }
+}
+
+// ─── Build baseline map from good-class images ────────────────────────────────
+async function lcBuildBaseline() {
+  const btn    = document.getElementById('lc-build-baseline-btn');
+  const status = document.getElementById('lc-baseline-status');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Строю baseline...';
+  status.textContent = 'Запрос к серверу...';
+  status.style.color = 'var(--muted)';
+  try {
+    const ngood = parseInt(document.getElementById('lc-ngood')?.value) || 10;
+    const res   = await fetch(`${API}/heatmap_calibrate/baseline?n_good=${ngood}`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const d = await res.json();
+    if (d.status === 'ok') {
+      status.textContent = `✓ ${d.n_images} кадров · mean=${d.mean.toFixed(4)} · p75=${d.p75.toFixed(4)}`;
+      status.style.color = '#2e7d32';
+      // Re-capture "before" snapshot now that baseline is built
+      await _lcCaptureBeforeSnapshot();
+      lcRunCalibrate();
+    } else {
+      status.textContent = `Ошибка: ${d.detail || JSON.stringify(d)}`;
+      status.style.color = '#c62828';
+    }
+  } catch(e) {
+    status.textContent = `Ошибка: ${e.message}`;
+    status.style.color = '#c62828';
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '📊 Построить baseline по good-кадрам';
+  }
+}
+
+// ─── Init for Live Calibration tab ───────────────────────────────────────────
+function lcInit() {
+  _lcBindSliders();
+  // Initialize display values
+  document.getElementById('lc-vmin-val').textContent  = '0.00';
+  document.getElementById('lc-gamma-val').textContent = '1.0';
+  document.getElementById('lc-thr-val').textContent   = '20';
+  document.getElementById('lc-smin-val').textContent  = '40';
+  document.getElementById('lc-blur-val').textContent  = LC_BLUR_LABELS[0];  // 'выкл'
+  document.getElementById('lc-pct-val').textContent   = '95';
+  const smaxInit = LC_SMAX_STEPS[8];
+  document.getElementById('lc-smax-val').textContent  = _lcFmt(smaxInit);
+  document.getElementById('lc-idx-val').textContent   = '0';
+  // Set S_max slider default to index 8 (1,500,000)
+  document.getElementById('lc-smax').value = '8';
+  document.getElementById('lc-status').textContent = 'Нажмите «Обновить превью» или подождите...';
+}
+
+// Trigger calibration when Live Calibration tab is opened.
+// MUST call lcInit() on first open to bind all slider/button event listeners.
+(function patchTabSwitchForLC() {
+  document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.tab-btn[data-tab="live_calib"]');
+    if (!btn) return;
+    if (!btn.dataset.lcInited) {
+      btn.dataset.lcInited = '1';
+      console.log('[LC] tab opened for first time → lcInit()');
+      lcInit();
+    }
+    // Always re-fetch when tab becomes active
+    setTimeout(() => lcRunCalibrate(), 120);
+  }, true);
+})();
+</script>
+
 </body>
 </html>
