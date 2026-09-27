@@ -7,3 +7,9 @@ server_stderr2.txt
 backend/storage/
 backend/models/baseline_map.npy
 *.log
+
+# Large artifacts (published in the GitHub release)
+backend/models/*.pt
+data/
+backend/venv/
+venv/
